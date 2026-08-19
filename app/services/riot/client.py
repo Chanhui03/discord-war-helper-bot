@@ -1,9 +1,13 @@
+import logging
 from typing import Any, Dict, List
 
 import httpx
 
 from app.config.settings import settings
+from app.log import warn
 from app.services.riot.exceptions import RiotAPIError
+
+log = logging.getLogger(__name__)
 
 class RiotClient:
     # 계정/경기 정보는 광역 라우팅, 랭크 정보는 플랫폼 라우팅을 쓴다.
@@ -25,6 +29,8 @@ class RiotClient:
 
         if response.status_code == 200:
             return response.json()
+
+        warn(log, "riot_error", status=response.status_code, path=httpx.URL(url).path)
 
         if response.status_code == 404:
             raise RiotAPIError("존재하지 않는 Riot ID입니다.")

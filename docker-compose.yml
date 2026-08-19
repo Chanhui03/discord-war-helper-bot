@@ -14,5 +14,16 @@ services:
       interval: 5s
       retries: 5
 
+  bot:
+    build: .
+    env_file: .env
+    environment:
+      # 컨테이너 안에서는 호스트가 localhost 가 아니라 db 다.
+      DATABASE_URL: postgresql+asyncpg://war:war@db:5432/war_helper
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:

@@ -3,7 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy.exc import IntegrityError
 
-from app.database.repositories import upsert_player
+from app.database.repositories import get_player, upsert_player
 from app.database.session import session_factory
 from app.services.riot.client import RiotClient
 from app.services.riot.exceptions import RiotAPIError
@@ -35,6 +35,10 @@ class Register(commands.Cog):
             return
 
         async with session_factory() as session:
+            # 다른 Riot 계정으로 바꿨다면 캐시를 무시하고 다시 받아야 한다.
+            existing = await get_player(session, interaction.user.id)
+            account_changed = existing is None or existing.puuid != account["puuid"]
+
             try:
                 player = await upsert_player(
                     session,
@@ -52,8 +56,10 @@ class Register(commands.Cog):
 
             # 전적 수집이 실패해도 계정 등록 자체는 유지한다.
             try:
-                await refresh_player_stats(session, self.riot, player)
-                note = ""
+                refreshed = await refresh_player_stats(
+                    session, self.riot, player, force=account_changed
+                )
+                note = "" if refreshed else "\n최근에 갱신해서 전적 조회는 생략했습니다."
             except RiotAPIError as error:
                 note = f"\n전적 수집 실패: {error} — `/등록`으로 다시 시도해주세요."
 

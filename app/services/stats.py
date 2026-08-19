@@ -1,6 +1,7 @@
 """Riot 응답을 플레이어 집계 지표로 변환한다."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from app.models.player import PlayerRole, PlayerStats
@@ -19,6 +20,9 @@ RECENT_MATCH_COUNT = 20
 
 # 개발용 키 한도(초당 20회)에 여유를 두고 동시 호출을 제한한다.
 MATCH_CONCURRENCY = 5
+
+# 이 시간 안에 갱신된 전적은 다시 받지 않는다(설계서 12장 rate limit).
+STATS_TTL = timedelta(hours=1)
 
 def pick_solo_entry(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """솔로랭크 항목을 고른다. 없으면 None(언랭)."""
@@ -120,8 +124,30 @@ async def fetch_matches(riot, match_ids: List[str]) -> List[Dict[str, Any]]:
 
     return await asyncio.gather(*(fetch(match_id) for match_id in match_ids))
 
-async def refresh_player_stats(session, riot, player) -> None:
-    """Riot API에서 랭크와 최근 경기를 받아 집계 테이블을 갱신한다."""
+def is_fresh(updated_at: Optional[datetime], now: Optional[datetime] = None) -> bool:
+    """마지막 갱신이 TTL 안이면 True.
+
+    SQLite 는 타임존을 저장하지 않아 naive 로 돌아온다. 양쪽 모두 UTC 기준이므로
+    tzinfo 가 없으면 UTC 로 간주한다.
+    """
+    if updated_at is None:
+        return False
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) - updated_at < STATS_TTL
+
+async def refresh_player_stats(session, riot, player, force: bool = False) -> bool:
+    """Riot API에서 랭크와 최근 경기를 받아 집계 테이블을 갱신한다.
+
+    최근에 갱신했으면 호출을 건너뛴다. 실제로 갱신했는지를 돌려준다.
+    """
+    # 방금 만들어진 player 는 관계가 적재된 적이 없다. 그대로 대입하면
+    # delete-orphan 정리 과정에서 lazy load 가 일어나 MissingGreenlet 이 난다.
+    await session.refresh(player, ["stats", "roles"])
+
+    if not force and player.stats is not None and is_fresh(player.stats.updated_at):
+        return False
+
     solo = pick_solo_entry(await riot.get_league_entries(player.puuid))
 
     match_ids = await riot.get_match_ids(player.puuid, RECENT_MATCH_COUNT)
@@ -131,10 +157,6 @@ async def refresh_player_stats(session, riot, player) -> None:
     wins = solo["wins"] if solo else 0
     losses = solo["losses"] if solo else 0
     total = wins + losses
-
-    # 방금 만들어진 player 는 관계가 적재된 적이 없다. 그대로 대입하면
-    # delete-orphan 정리 과정에서 lazy load 가 일어나 MissingGreenlet 이 난다.
-    await session.refresh(player, ["stats", "roles"])
 
     player.stats = PlayerStats(
         tier=solo["tier"] if solo else None,
@@ -150,6 +172,7 @@ async def refresh_player_stats(session, riot, player) -> None:
         PlayerRole(role=role, **values) for role, values in aggregate["roles"].items()
     ]
     await session.commit()
+    return True
 
 def build_profile(
     player,

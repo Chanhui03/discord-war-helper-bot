@@ -53,11 +53,32 @@ class TestRefreshPlayerStats:
     async def test_refresh_twice_does_not_duplicate_rows(self, session):
         player = await register(session, 1, "p-1")
         await refresh_player_stats(session, FakeRiot(), player)
-        await refresh_player_stats(session, FakeRiot(tier="PLATINUM"), player)
+        await refresh_player_stats(session, FakeRiot(tier="PLATINUM"), player, force=True)
 
         stored = await get_player(session, 1)
         assert stored.stats.tier == "PLATINUM"
         assert len(stored.roles) == 2, "delete-orphan 이 이전 라인 행을 지우지 않았다"
+
+    async def test_recent_refresh_is_skipped(self, session):
+        """설계서 12장: 최근에 받은 전적은 다시 요청하지 않는다."""
+        player = await register(session, 1, "p-1")
+        assert await refresh_player_stats(session, FakeRiot(), player) is True
+
+        riot = FakeRiot(tier="PLATINUM")
+        assert await refresh_player_stats(session, riot, player) is False
+
+        stored = await get_player(session, 1)
+        assert stored.stats.tier == "GOLD", "건너뛰었는데 값이 바뀌었다"
+
+    async def test_force_bypasses_the_cache(self, session):
+        player = await register(session, 1, "p-1")
+        await refresh_player_stats(session, FakeRiot(), player)
+        assert await refresh_player_stats(
+            session, FakeRiot(tier="PLATINUM"), player, force=True
+        ) is True
+
+        stored = await get_player(session, 1)
+        assert stored.stats.tier == "PLATINUM"
 
 class TestUpsertPlayer:
     async def test_reregistering_keeps_the_same_row(self, session):

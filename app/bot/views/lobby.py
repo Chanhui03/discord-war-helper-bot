@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 import discord
 
@@ -14,7 +15,10 @@ from app.database.repositories import (
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS, ROLES
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams
+from app.log import event
 from app.services.stats import build_profile
+
+log = logging.getLogger(__name__)
 
 def lobby_embed(match) -> discord.Embed:
     count = len(match.participants)
@@ -71,9 +75,13 @@ def teams_embed(match, result) -> discord.Embed:
     return embed
 
 class LobbyView(discord.ui.View):
+    """재시작 후에도 동작하도록 timeout 없이 match_id 를 custom_id 에 담는다."""
+
     def __init__(self, match_id: int) -> None:
-        super().__init__(timeout=1800)
+        super().__init__(timeout=None)
         self.match_id = match_id
+        for item in self.children:
+            item.custom_id = f"lobby:{item.custom_id}:{match_id}"
 
     async def _update(self, interaction: discord.Interaction, action) -> None:
         async with session_factory() as session:
@@ -100,15 +108,15 @@ class LobbyView(discord.ui.View):
         self.generate.disabled = len(match.participants) < LOBBY_SIZE
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="참가", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="참가", style=discord.ButtonStyle.success, custom_id="join")
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._update(interaction, join_match)
 
-    @discord.ui.button(label="취소", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="취소", style=discord.ButtonStyle.secondary, custom_id="leave")
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._update(interaction, leave_match)
 
-    @discord.ui.button(label="팀 생성", style=discord.ButtonStyle.primary, disabled=True)
+    @discord.ui.button(label="팀 생성", style=discord.ButtonStyle.primary, disabled=True, custom_id="generate")
     async def generate(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.manage_guild:
             await interaction.response.send_message(
@@ -151,5 +159,15 @@ class LobbyView(discord.ui.View):
             match = await save_teams(session, self.match_id, result)
             embed = teams_embed(match, result)
 
+        event(
+            log,
+            "teams_generated",
+            match=self.match_id,
+            score=round(result.score, 2),
+            evaluated=result.evaluated,
+            bans_honoured=result.bans_honoured,
+            power_a=round(result.team_a.power, 1),
+            power_b=round(result.team_b.power, 1),
+        )
         self.stop()
         await interaction.edit_original_response(embed=embed, view=None)

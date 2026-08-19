@@ -137,3 +137,28 @@ class TestFetchMatches:
         assert riot.calls == len(ids)
         assert riot.peak <= MATCH_CONCURRENCY
         assert riot.peak > 1, "동시 호출이 전혀 일어나지 않았다"
+
+class TestIsFresh:
+    def test_never_refreshed(self):
+        from app.services.stats import is_fresh
+
+        assert is_fresh(None) is False
+
+    def test_within_ttl(self):
+        from datetime import datetime, timedelta, timezone
+
+        from app.services.stats import STATS_TTL, is_fresh
+
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert is_fresh(now - STATS_TTL + timedelta(seconds=1), now) is True
+        assert is_fresh(now - STATS_TTL - timedelta(seconds=1), now) is False
+
+    def test_naive_timestamps_are_treated_as_utc(self):
+        """SQLite 는 타임존을 저장하지 않는다."""
+        from datetime import datetime, timedelta, timezone
+
+        from app.services.stats import is_fresh
+
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert is_fresh(datetime(2026, 1, 1) - timedelta(minutes=1), now) is True
+        assert is_fresh(datetime(2026, 1, 1) - timedelta(hours=2), now) is False

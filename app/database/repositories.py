@@ -206,3 +206,8 @@ async def last_assigned_roles(
     for player_id, role, _ in await session.execute(statement):
         latest.setdefault(player_id, role)
     return latest
+
+async def open_matches(session: AsyncSession) -> Sequence[Match]:
+    """아직 끝나지 않은 내전 전부. 재시작 시 버튼을 다시 등록하는 데 쓴다."""
+    result = await session.execute(select(Match).where(Match.completed.is_(False)))
+    return result.scalars().all()

@@ -1,8 +1,13 @@
+import logging
+
 import discord
 
 from app.database.repositories import custom_records, finish_match, get_match
 from app.database.session import session_factory
+from app.log import event
 from app.roles import ROLE_LABELS, ROLES
+
+log = logging.getLogger(__name__)
 
 def team_lines(match, team: str, records=None) -> str:
     rows = sorted(
@@ -42,9 +47,13 @@ def result_embed(match, winner: str, records) -> discord.Embed:
     return embed
 
 class ResultView(discord.ui.View):
+    """재시작 후에도 동작하도록 timeout 없이 match_id 를 custom_id 에 담는다."""
+
     def __init__(self, match_id: int) -> None:
-        super().__init__(timeout=600)
+        super().__init__(timeout=None)
         self.match_id = match_id
+        for item in self.children:
+            item.custom_id = f"result:{item.custom_id}:{match_id}"
 
     async def _finish(self, interaction: discord.Interaction, winner: str) -> None:
         if not interaction.user.guild_permissions.manage_guild:
@@ -67,13 +76,20 @@ class ResultView(discord.ui.View):
             )
             embed = result_embed(match, winner, records)
 
+        event(
+            log,
+            "result_saved",
+            match=self.match_id,
+            winner=winner,
+            by=interaction.user.id,
+        )
         self.stop()
         await interaction.response.edit_message(embed=embed, view=None)
 
-    @discord.ui.button(label="A팀 승리", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="A팀 승리", style=discord.ButtonStyle.success, custom_id="a")
     async def team_a(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._finish(interaction, "A")
 
-    @discord.ui.button(label="B팀 승리", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="B팀 승리", style=discord.ButtonStyle.success, custom_id="b")
     async def team_b(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._finish(interaction, "B")
