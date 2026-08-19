@@ -1,6 +1,6 @@
-from typing import Optional, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.match import Match, MatchPlayer
@@ -130,6 +130,50 @@ async def save_teams(session: AsyncSession, match_id: int, result) -> Optional[M
 
     for entry in match.participants:
         entry.team, entry.role = assignment[entry.player_id]
+
+    await session.commit()
+    session.expire(match)
+    return await get_match(session, match_id)
+
+async def custom_records(
+    session: AsyncSession, player_ids: Sequence[int], server_id: int
+) -> Dict[int, Tuple[int, int]]:
+    """해당 서버에서 끝난 내전 기준 (경기 수, 승 수)를 플레이어별로 집계한다.
+
+    설계서 5.2 의 custom_games / custom_win_rate 에 해당한다. 컬럼으로 저장하지
+    않고 match_players 에서 바로 세는 이유는, 전적 갱신과 결과 저장이 각각 같은
+    값을 쓰면 어긋날 수 있기 때문이다.
+    """
+    if not player_ids:
+        return {}
+
+    wins = func.sum(case((MatchPlayer.win.is_(True), 1), else_=0))
+    result = await session.execute(
+        select(MatchPlayer.player_id, func.count().label("games"), wins.label("wins"))
+        .join(Match, Match.id == MatchPlayer.match_id)
+        .where(
+            Match.completed.is_(True),
+            Match.discord_server_id == server_id,
+            MatchPlayer.player_id.in_(player_ids),
+        )
+        .group_by(MatchPlayer.player_id)
+    )
+    return {row.player_id: (row.games, int(row.wins or 0)) for row in result}
+
+async def finish_match(
+    session: AsyncSession, match_id: int, winner: str
+) -> Optional[Match]:
+    """승리 팀을 확정하고 참가자별 승패를 기록한다."""
+    match = await get_match(session, match_id)
+    if match is None or match.completed:
+        return None
+
+    for entry in match.participants:
+        entry.win = entry.team == winner
+
+    match.team_a_score = int(winner == "A")
+    match.team_b_score = int(winner == "B")
+    match.completed = True
 
     await session.commit()
     session.expire(match)

@@ -18,13 +18,14 @@ from app.services.matchmaking import (
 )
 
 def profile(pid, tier=60.0, main=None, secondary=None, win_rate=0.5,
-            recent=50.0, performance=50.0, role_scores=None):
+            recent=50.0, performance=50.0, role_scores=None, custom=None):
     return PlayerProfile(
         player_id=pid,
         display=f"P{pid}",
         tier=tier,
         recent_form=recent,
         performance=performance,
+        custom=custom,
         win_rate=win_rate,
         main_role=main,
         secondary_role=secondary,

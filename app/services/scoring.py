@@ -101,3 +101,15 @@ def role_affinity(role: str, main_role: Optional[str], secondary_role: Optional[
 def role_power(score: float, role: str, main_role: Optional[str], secondary_role: Optional[str]) -> float:
     """기본 점수에 라인 적합도 배수를 적용한다(설계서 6.1)."""
     return score * ROLE_MULTIPLIERS[role_affinity(role, main_role, secondary_role)]
+
+def custom_score(games: int, wins: int) -> Optional[float]:
+    """내전 성적을 0~100 으로 환산한다(설계서 6장 Custom Game Score).
+
+    기록이 없으면 None 을 돌려 해당 가중치를 다른 요소에 재분배한다.
+    """
+    if games <= 0:
+        return None
+
+    win_rate = wins / games
+    confidence = min(games / 10.0, 1.0)
+    return NEUTRAL + (win_rate * 100 - NEUTRAL) * confidence

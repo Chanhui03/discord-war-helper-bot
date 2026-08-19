@@ -8,6 +8,7 @@ from app.roles import RIOT_POSITIONS
 from app.services.matchmaking import PlayerProfile
 from app.services.scoring import (
     base_score,
+    custom_score,
     performance_score,
     role_score,
     tier_score,
@@ -150,8 +151,8 @@ async def refresh_player_stats(session, riot, player) -> None:
     ]
     await session.commit()
 
-def build_profile(player) -> PlayerProfile:
-    """저장된 전적에서 밸런싱용 스냅샷을 만든다."""
+def build_profile(player, custom_games: int = 0, custom_wins: int = 0) -> PlayerProfile:
+    """저장된 전적과 내전 기록에서 밸런싱용 스냅샷을 만든다."""
     stats = player.stats
     return PlayerProfile(
         player_id=player.id,
@@ -159,6 +160,7 @@ def build_profile(player) -> PlayerProfile:
         tier=tier_score(stats.tier, stats.division, stats.lp) if stats else None,
         recent_form=stats.recent_win_rate * 100 if stats else None,
         performance=performance_score(stats.avg_kda) if stats else None,
+        custom=custom_score(custom_games, custom_wins),
         win_rate=stats.win_rate if stats else 0.0,
         main_role=player.main_role,
         secondary_role=player.secondary_role,

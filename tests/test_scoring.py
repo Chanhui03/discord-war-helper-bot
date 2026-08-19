@@ -120,3 +120,33 @@ class TestRolePower:
 
     def test_unknown_preference_uses_lowest_multiplier(self):
         assert role_power(80.0, "TOP", None, None) == pytest.approx(48.0)
+
+class TestCustomScore:
+    def test_no_custom_games_returns_none(self):
+        from app.services.scoring import custom_score
+
+        assert custom_score(0, 0) is None
+
+    def test_small_sample_shrinks_toward_neutral(self):
+        from app.services.scoring import custom_score
+
+        few = custom_score(2, 2)
+        many = custom_score(10, 10)
+        assert NEUTRAL < few < many == 100.0
+
+    def test_losing_record_scores_below_neutral(self):
+        from app.services.scoring import custom_score
+
+        assert custom_score(20, 4) < NEUTRAL
+
+    def test_confidence_saturates_at_ten_games(self):
+        from app.services.scoring import custom_score
+
+        assert custom_score(10, 7) == custom_score(40, 28)
+
+    def test_feeds_into_base_score(self):
+        from app.services.scoring import custom_score
+
+        strong = base_score(tier=60.0, custom=custom_score(20, 18))
+        weak = base_score(tier=60.0, custom=custom_score(20, 2))
+        assert strong > 60.0 > weak

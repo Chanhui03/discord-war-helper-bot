@@ -3,6 +3,7 @@ import asyncio
 import discord
 
 from app.database.repositories import (
+    custom_records,
     get_match,
     get_player,
     join_match,
@@ -115,7 +116,15 @@ class LobbyView(discord.ui.View):
                     f"참가자가 {LOBBY_SIZE}명이어야 합니다.", ephemeral=True
                 )
                 return
-            profiles = [build_profile(entry.player) for entry in match.participants]
+            records = await custom_records(
+                session,
+                [entry.player_id for entry in match.participants],
+                match.discord_server_id,
+            )
+            profiles = [
+                build_profile(entry.player, *records.get(entry.player_id, (0, 0)))
+                for entry in match.participants
+            ]
 
         # 조합 탐색은 1초 이상 걸릴 수 있어 이벤트 루프를 막지 않는다.
         await interaction.response.defer()

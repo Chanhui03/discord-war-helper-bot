@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from app.database.repositories import get_player
+from app.database.repositories import custom_records, get_player
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
 from app.services.stats import player_score
@@ -12,9 +12,17 @@ class Profile(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="전적", description="저장된 전적과 라인별 지표를 봅니다.")
+    @app_commands.guild_only()
     async def profile(self, interaction: discord.Interaction) -> None:
         async with session_factory() as session:
             player = await get_player(session, interaction.user.id)
+            custom = (
+                (await custom_records(
+                    session, [player.id], interaction.guild_id
+                )).get(player.id, (0, 0))
+                if player
+                else (0, 0)
+            )
 
         if player is None:
             await interaction.response.send_message(
@@ -39,6 +47,7 @@ class Profile(commands.Cog):
             stats.avg_kda,
             main_row.role_score if main_row else None,
         )
+        custom_games, custom_wins = custom
 
         rank = (
             f"{stats.tier} {stats.division} {stats.lp}LP"
@@ -57,6 +66,14 @@ class Profile(commands.Cog):
         embed.add_field(
             name="최근 폼",
             value=f"승률 {stats.recent_win_rate:.1%}\nKDA {stats.avg_kda:.2f}",
+        )
+        embed.add_field(
+            name="내전 전적",
+            value=(
+                f"{custom_games}전 {custom_wins}승 ({custom_wins / custom_games:.1%})"
+                if custom_games
+                else "기록 없음"
+            ),
         )
         embed.add_field(
             name="선호 라인",

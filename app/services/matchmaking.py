@@ -44,6 +44,7 @@ class PlayerProfile:
     tier: Optional[float]
     recent_form: Optional[float]
     performance: Optional[float]
+    custom: Optional[float]
     win_rate: float
     main_role: Optional[str]
     secondary_role: Optional[str]
@@ -74,6 +75,7 @@ def power_of(profile: PlayerProfile, role: str) -> float:
             role=profile.role_scores.get(role),
             recent_form=profile.recent_form,
             performance=profile.performance,
+            custom=profile.custom,
         ),
         role,
         profile.main_role,

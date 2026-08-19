@@ -111,3 +111,135 @@ class TestLobby:
         assert all(entry.team in ("A", "B") for entry in saved.participants)
         assert all(entry.role for entry in saved.participants)
         assert len([e for e in saved.participants if e.team == "A"]) == 5
+
+class TestResults:
+    async def _staged_match(self, session, server_id=1):
+        """팀 배정까지 끝난 내전을 만든다."""
+        import random
+
+        from app.database.repositories import create_match, get_match
+        from app.services.matchmaking import LOBBY_SIZE, find_best_teams
+        from app.services.stats import build_profile
+
+        match = await create_match(session, server_id=server_id)
+        for i in range(LOBBY_SIZE):
+            player = await register(session, 1000 + i, f"p-{server_id}-{i}")
+            await join_match(session, match.id, player.id)
+
+        match = await get_match(session, match.id)
+        result = find_best_teams(
+            [build_profile(entry.player) for entry in match.participants],
+            rng=random.Random(1),
+        )
+        return await save_teams(session, match.id, result)
+
+    async def test_finish_match_records_wins_and_scores(self, session):
+        from app.database.repositories import finish_match
+
+        match = await self._staged_match(session)
+        finished = await finish_match(session, match.id, "A")
+
+        assert finished.completed is True
+        assert (finished.team_a_score, finished.team_b_score) == (1, 0)
+        for entry in finished.participants:
+            assert entry.win is (entry.team == "A")
+
+    async def test_finishing_twice_is_rejected(self, session):
+        from app.database.repositories import finish_match
+
+        match = await self._staged_match(session)
+        assert await finish_match(session, match.id, "A") is not None
+        assert await finish_match(session, match.id, "B") is None
+
+    async def test_custom_records_ignore_unfinished_matches(self, session):
+        from app.database.repositories import custom_records, finish_match
+
+        match = await self._staged_match(session)
+        ids = [entry.player_id for entry in match.participants]
+        assert await custom_records(session, ids, 1) == {}
+
+        await finish_match(session, match.id, "A")
+        records = await custom_records(session, ids, 1)
+        assert len(records) == len(ids)
+        assert sum(wins for _, wins in records.values()) == 5
+        assert all(games == 1 for games, _ in records.values())
+
+    async def test_custom_records_accumulate_within_a_server(self, session):
+        from app.database.repositories import custom_records, finish_match
+
+        first = await self._staged_match(session, server_id=1)
+        await finish_match(session, first.id, "A")
+        winner_ids = [e.player_id for e in first.participants if e.team == "A"]
+
+        second = await create_second(session, winner_ids, server_id=1)
+        await finish_match(session, second.id, "A")
+
+        records = await custom_records(session, winner_ids, 1)
+        for player_id in winner_ids:
+            games, wins = records[player_id]
+            # 2차전에서 팀이 다시 섞이므로 2승일 수도 1승일 수도 있다.
+            assert games == 2, f"{player_id}: {games}전으로 집계됨"
+            assert 1 <= wins <= 2, f"{player_id}: {wins}승"
+
+    async def test_custom_records_are_scoped_to_one_server(self, session):
+        """설계서 5.2: 내전 성적은 해당 Discord 서버 기준으로 센다."""
+        from app.database.repositories import custom_records, finish_match
+
+        first = await self._staged_match(session, server_id=1)
+        await finish_match(session, first.id, "A")
+        winner_ids = [e.player_id for e in first.participants if e.team == "A"]
+
+        elsewhere = await create_second(session, winner_ids, server_id=2)
+        await finish_match(session, elsewhere.id, "A")
+
+        here = await custom_records(session, winner_ids, 1)
+        there = await custom_records(session, winner_ids, 2)
+        assert all(games == 1 for games, _ in here.values())
+        assert all(games == 1 for games, _ in there.values())
+        assert await custom_records(session, winner_ids, 3) == {}
+
+    async def test_custom_record_reaches_the_balancing_profile(self, session):
+        from app.database.repositories import custom_records, finish_match
+        from app.services.stats import build_profile
+
+        match = await self._staged_match(session)
+        await finish_match(session, match.id, "A")
+        records = await custom_records(
+            session, [e.player_id for e in match.participants], 1
+        )
+
+        winner = next(e for e in match.participants if e.team == "A")
+        loser = next(e for e in match.participants if e.team == "B")
+        won = build_profile(winner.player, *records[winner.player_id])
+        lost = build_profile(loser.player, *records[loser.player_id])
+
+        assert won.custom > lost.custom
+
+    async def test_empty_player_list_returns_empty(self, session):
+        from app.database.repositories import custom_records
+
+        assert await custom_records(session, [], 1) == {}
+
+async def create_second(session, player_ids, server_id):
+    """같은 참가자로 두 번째 내전을 만들어 팀까지 배정한다."""
+    import random
+
+    from app.database.repositories import create_match, get_match
+    from app.services.matchmaking import LOBBY_SIZE, find_best_teams
+    from app.services.stats import build_profile
+
+    match = await create_match(session, server_id=server_id)
+    extra = [
+        await register(session, 9000 + server_id * 100 + i, f"extra-{server_id}-{i}")
+        for i in range(LOBBY_SIZE - len(player_ids))
+    ]
+    for player_id in player_ids:
+        await join_match(session, match.id, player_id)
+    for player in extra:
+        await join_match(session, match.id, player.id)
+
+    match = await get_match(session, match.id)
+    result = find_best_teams(
+        [build_profile(e.player) for e in match.participants], rng=random.Random(2)
+    )
+    return await save_teams(session, match.id, result)
