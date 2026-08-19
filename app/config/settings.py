@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     discord_token: str
     riot_api_key: str
+    database_url: str
     discord_guild_id: Optional[int] = None
 
     model_config = SettingsConfigDict(

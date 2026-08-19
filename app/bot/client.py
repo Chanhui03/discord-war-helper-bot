@@ -7,7 +7,10 @@ from app.config.settings import settings
 
 log = logging.getLogger(__name__)
 
-EXTENSIONS = ["app.bot.commands.ping"]
+EXTENSIONS = [
+    "app.bot.commands.ping",
+    "app.bot.commands.register",
+]
 
 class WarBot(commands.Bot):
     def __init__(self) -> None:
