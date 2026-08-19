@@ -25,12 +25,14 @@ WEIGHTS = {
     "mastery": 0.05,
 }
 
-# 설계서 6.1 라인 적합도 배수.
+# 설계서 6.1 라인 적합도 배수. avoid 는 사용자가 명시한 기피 라인으로,
+# 비선호(off)보다도 더 불리하게 본다.
 ROLE_MULTIPLIERS = {
     "main": 1.00,
     "secondary": 0.85,
     "off": 0.70,
     "unknown": 0.60,
+    "avoid": 0.55,
 }
 
 NEUTRAL = 50.0
@@ -88,8 +90,15 @@ def base_score(
     total_weight = sum(WEIGHTS[k] for k in available)
     return sum(WEIGHTS[k] * v for k, v in available.items()) / total_weight
 
-def role_affinity(role: str, main_role: Optional[str], secondary_role: Optional[str]) -> str:
-    """해당 라인이 주라인/부라인/비선호/미지 중 무엇인지 판정한다."""
+def role_affinity(
+    role: str,
+    main_role: Optional[str],
+    secondary_role: Optional[str],
+    avoid_role: Optional[str] = None,
+) -> str:
+    """해당 라인이 기피/주/부/비선호/미지 중 무엇인지 판정한다."""
+    if avoid_role is not None and role == avoid_role:
+        return "avoid"
     if main_role is None and secondary_role is None:
         return "unknown"
     if role == main_role:
@@ -98,9 +107,17 @@ def role_affinity(role: str, main_role: Optional[str], secondary_role: Optional[
         return "secondary"
     return "off"
 
-def role_power(score: float, role: str, main_role: Optional[str], secondary_role: Optional[str]) -> float:
+def role_power(
+    score: float,
+    role: str,
+    main_role: Optional[str],
+    secondary_role: Optional[str],
+    avoid_role: Optional[str] = None,
+) -> float:
     """기본 점수에 라인 적합도 배수를 적용한다(설계서 6.1)."""
-    return score * ROLE_MULTIPLIERS[role_affinity(role, main_role, secondary_role)]
+    return score * ROLE_MULTIPLIERS[
+        role_affinity(role, main_role, secondary_role, avoid_role)
+    ]
 
 def custom_score(games: int, wins: int) -> Optional[float]:
     """내전 성적을 0~100 으로 환산한다(설계서 6장 Custom Game Score).

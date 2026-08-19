@@ -77,3 +77,38 @@ def test_teams_embed_lists_both_teams_in_role_order():
         assert len(lines) == TEAM_SIZE
         labels = [line.split("`")[1].strip() for line in lines]
         assert labels == [ROLE_LABELS[r] for r in ROLES]
+
+def _rendered(players, seed=3, match_id=42):
+    import random
+
+    from app.bot.views.lobby import teams_embed
+    from app.services.matchmaking import find_best_teams
+
+    result = find_best_teams(players, rng=random.Random(seed))
+    match = SimpleNamespace(
+        id=match_id,
+        participants=[
+            SimpleNamespace(player_id=i, player=SimpleNamespace(discord_id=900 + i))
+            for i in range(LOBBY_SIZE)
+        ],
+    )
+    return teams_embed(match, result), result
+
+def test_no_warning_when_bans_are_honoured():
+    from app.roles import ROLES
+    from tests.test_matchmaking import profile
+
+    embed, result = _rendered([profile(i, main=ROLES[i % 5]) for i in range(LOBBY_SIZE)])
+    assert result.bans_honoured
+    assert all("기피 라인 금지" not in field.name for field in embed.fields)
+
+def test_warning_shown_when_bans_cannot_be_honoured():
+    from tests.test_matchmaking import profile
+
+    players = [
+        profile(i, main="MID", avoid="JUNGLE", must_avoid=i < 9)
+        for i in range(LOBBY_SIZE)
+    ]
+    embed, result = _rendered(players, seed=1)
+    assert result.bans_honoured is False
+    assert any("기피 라인 금지" in field.name for field in embed.fields)

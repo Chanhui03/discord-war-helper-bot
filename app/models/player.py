@@ -30,6 +30,7 @@ class Player(Base):
     region: Mapped[str] = mapped_column(String(8), default="kr")
     main_role: Mapped[Optional[str]] = mapped_column(String(8))
     secondary_role: Mapped[Optional[str]] = mapped_column(String(8))
+    avoid_role: Mapped[Optional[str]] = mapped_column(String(8))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

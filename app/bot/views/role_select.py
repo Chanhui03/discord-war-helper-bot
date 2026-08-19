@@ -1,37 +1,58 @@
+from typing import Optional
+
 import discord
 
 from app.database.repositories import set_role_preference
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS, ROLES
 
-def describe(main_role, secondary_role) -> str:
-    main = ROLE_LABELS.get(main_role, "미설정")
-    secondary = ROLE_LABELS.get(secondary_role, "미설정")
-    return f"주라인: **{main}** / 부라인: **{secondary}**"
+NO_ROLE = "NONE"
+
+FIELDS = (
+    ("main_role", "주라인"),
+    ("secondary_role", "부라인"),
+    ("avoid_role", "기피 라인"),
+)
+
+def label_of(role: Optional[str]) -> str:
+    return ROLE_LABELS.get(role, "없음")
+
+def describe(main_role, secondary_role, avoid_role) -> str:
+    return (
+        f"주라인 **{label_of(main_role)}** / "
+        f"부라인 **{label_of(secondary_role)}** / "
+        f"기피 **{label_of(avoid_role)}**\n"
+        "-# 기피 라인을 간 다음 내전에서는 그 라인에 배정되지 않습니다."
+    )
 
 class RoleSelect(discord.ui.Select):
-    def __init__(self, field: str, placeholder: str) -> None:
+    def __init__(self, field: str, title: str, current: Optional[str]) -> None:
+        options = [
+            discord.SelectOption(
+                label="없음", value=NO_ROLE, default=current is None
+            )
+        ] + [
+            discord.SelectOption(
+                label=ROLE_LABELS[role], value=role, default=role == current
+            )
+            for role in ROLES
+        ]
         super().__init__(
-            placeholder=placeholder,
-            min_values=1,
-            max_values=1,
-            options=[
-                discord.SelectOption(label=ROLE_LABELS[role], value=role)
-                for role in ROLES
-            ],
+            placeholder=f"{title} 선택", min_values=1, max_values=1, options=options
         )
         self.field = field
+        self.title = title
 
     async def callback(self, interaction: discord.Interaction) -> None:
         view: "RolePreferenceView" = self.view
-        role = self.values[0]
+        role = None if self.values[0] == NO_ROLE else self.values[0]
 
-        other = (
-            view.secondary_role if self.field == "main_role" else view.main_role
-        )
-        if role == other:
+        planned = dict(view.selection())
+        planned[self.field] = role
+        chosen = [value for value in planned.values() if value is not None]
+        if len(chosen) != len(set(chosen)):
             await interaction.response.send_message(
-                "주라인과 부라인은 다르게 선택해주세요.", ephemeral=True
+                "주라인 / 부라인 / 기피 라인은 서로 다르게 선택해주세요.", ephemeral=True
             )
             return
 
@@ -39,15 +60,31 @@ class RoleSelect(discord.ui.Select):
             await set_role_preference(session, view.discord_id, self.field, role)
 
         setattr(view, self.field, role)
+        view.refresh_defaults()
         await interaction.response.edit_message(
-            content=describe(view.main_role, view.secondary_role), view=view
+            content=describe(**view.selection()), view=view
         )
 
 class RolePreferenceView(discord.ui.View):
-    def __init__(self, discord_id: int, main_role, secondary_role) -> None:
+    def __init__(
+        self, discord_id: int, main_role, secondary_role, avoid_role
+    ) -> None:
         super().__init__(timeout=180)
         self.discord_id = discord_id
         self.main_role = main_role
         self.secondary_role = secondary_role
-        self.add_item(RoleSelect("main_role", "주라인 선택"))
-        self.add_item(RoleSelect("secondary_role", "부라인 선택"))
+        self.avoid_role = avoid_role
+        for field, title in FIELDS:
+            self.add_item(RoleSelect(field, title, getattr(self, field)))
+
+    def selection(self):
+        return {field: getattr(self, field) for field, _ in FIELDS}
+
+    def refresh_defaults(self) -> None:
+        """선택 후에도 현재 값이 표시되도록 default 를 갱신한다."""
+        for item in self.children:
+            current = getattr(self, item.field)
+            for option in item.options:
+                option.default = (
+                    current is None if option.value == NO_ROLE else option.value == current
+                )

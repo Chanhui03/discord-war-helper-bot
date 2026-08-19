@@ -18,7 +18,8 @@ from app.services.matchmaking import (
 )
 
 def profile(pid, tier=60.0, main=None, secondary=None, win_rate=0.5,
-            recent=50.0, performance=50.0, role_scores=None, custom=None):
+            recent=50.0, performance=50.0, role_scores=None, custom=None,
+            avoid=None, must_avoid=False):
     return PlayerProfile(
         player_id=pid,
         display=f"P{pid}",
@@ -29,6 +30,8 @@ def profile(pid, tier=60.0, main=None, secondary=None, win_rate=0.5,
         win_rate=win_rate,
         main_role=main,
         secondary_role=secondary,
+        avoid_role=avoid,
+        must_avoid=must_avoid,
         role_scores=role_scores or {},
     )
 
@@ -271,3 +274,58 @@ class TestPruningIsExact:
         expected = self.brute_force_best(players)
         # 동점 구간에서 무작위로 고르므로 오차 허용치는 TIEBREAK_EPSILON.
         assert result.score == pytest.approx(expected, abs=0.5)
+
+
+class TestAvoidRole:
+    """기피 라인: 직전 내전에서 갔으면 이번에는 하드 금지."""
+
+    def test_compensated_player_never_gets_the_avoided_role(self):
+        players = [profile(i, main=ROLES[i % 5]) for i in range(LOBBY_SIZE)]
+        players[0] = profile(0, main="MID", avoid="JUNGLE", must_avoid=True)
+
+        for seed in range(10):
+            result = find_best_teams(players, rng=random.Random(seed))
+            assigned = {
+                member.player_id: role
+                for team in (result.team_a, result.team_b)
+                for member, role in team.members
+            }
+            assert assigned[0] != "JUNGLE", f"seed={seed} 에서 기피 라인에 배정됨"
+            assert result.bans_honoured
+
+    def test_many_compensated_players_are_all_honoured(self):
+        # 정글러가 부족해 매번 같은 사람들이 정글을 가는 상황.
+        players = [
+            profile(i, main=ROLES[i % 5], avoid="JUNGLE", must_avoid=i < 4)
+            for i in range(LOBBY_SIZE)
+        ]
+        result = find_best_teams(players, rng=random.Random(3))
+        for team in (result.team_a, result.team_b):
+            for member, role in team.members:
+                if member.must_avoid:
+                    assert role != "JUNGLE"
+        assert result.bans_honoured
+
+    def test_uncompensated_player_may_still_take_the_avoided_role(self):
+        """금지는 보상 대상자에게만 적용된다. 그 외에는 배수로만 불리하다."""
+        players = [profile(i, main="MID", avoid="JUNGLE") for i in range(LOBBY_SIZE)]
+        result = find_best_teams(players, rng=random.Random(1))
+        roles = [role for team in (result.team_a, result.team_b)
+                 for _, role in team.members]
+        assert roles.count("JUNGLE") == 2  # 팀당 하나씩 반드시 채워진다
+        assert result.bans_honoured
+
+    def test_falls_back_when_the_ban_cannot_be_satisfied(self):
+        # 9명이 정글을 금지당하면 정글 슬롯 2개를 채울 수 없다.
+        players = [
+            profile(i, main="MID", avoid="JUNGLE", must_avoid=i < 9)
+            for i in range(LOBBY_SIZE)
+        ]
+        result = find_best_teams(players, rng=random.Random(1))
+        assert result.bans_honoured is False, "불가능한데도 제약을 지켰다고 보고했다"
+        assert len(result.team_a.members) == len(result.team_b.members) == TEAM_SIZE
+
+    def test_avoided_role_lowers_power(self):
+        player = profile(1, main="MID", secondary="TOP", avoid="JUNGLE")
+        assert power_of(player, "JUNGLE") < power_of(player, "ADC")
+        assert power_of(player, "ADC") < power_of(player, "TOP")

@@ -106,6 +106,15 @@ class TestRoleAffinity:
     def test_unset_preferences_are_unknown(self):
         assert role_affinity("MID", None, None) == "unknown"
 
+    def test_avoid_beats_every_other_classification(self):
+        # 기피 라인은 주라인으로도 지정돼 있어도 기피가 우선한다.
+        assert role_affinity("MID", "MID", "TOP", "MID") == "avoid"
+        assert role_affinity("JUNGLE", "MID", "TOP", "JUNGLE") == "avoid"
+        assert role_affinity("JUNGLE", None, None, "JUNGLE") == "avoid"
+
+    def test_avoid_unset_keeps_previous_behaviour(self):
+        assert role_affinity("JUNGLE", "MID", "TOP", None) == "off"
+
     def test_main_secondary_and_off(self):
         assert role_affinity("ADC", "ADC", "MID") == "main"
         assert role_affinity("MID", "ADC", "MID") == "secondary"
@@ -120,6 +129,12 @@ class TestRolePower:
 
     def test_unknown_preference_uses_lowest_multiplier(self):
         assert role_power(80.0, "TOP", None, None) == pytest.approx(48.0)
+
+    def test_avoided_role_is_worse_than_off_role(self):
+        avoided = role_power(80.0, "JUNGLE", "MID", "TOP", "JUNGLE")
+        off = role_power(80.0, "ADC", "MID", "TOP", "JUNGLE")
+        assert avoided == pytest.approx(44.0)  # 80 * 0.55
+        assert avoided < off == pytest.approx(56.0)
 
 class TestCustomScore:
     def test_no_custom_games_returns_none(self):

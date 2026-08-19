@@ -5,6 +5,7 @@ import discord
 from app.database.repositories import (
     custom_records,
     get_match,
+    last_assigned_roles,
     get_player,
     join_match,
     leave_match,
@@ -48,6 +49,12 @@ def teams_embed(match, result) -> discord.Embed:
         ),
         colour=discord.Colour.blurple(),
     )
+    if not result.bans_honoured:
+        embed.add_field(
+            name="⚠️ 기피 라인 금지 미적용",
+            value="이번 참가자 구성으로는 기피 라인을 모두 피할 수 없었습니다.",
+            inline=False,
+        )
 
     by_id = {entry.player_id: entry for entry in match.participants}
     for label, team in (("A팀", result.team_a), ("B팀", result.team_b)):
@@ -121,8 +128,18 @@ class LobbyView(discord.ui.View):
                 [entry.player_id for entry in match.participants],
                 match.discord_server_id,
             )
+            previous = await last_assigned_roles(
+                session,
+                [entry.player_id for entry in match.participants],
+                match.discord_server_id,
+                exclude_match_id=match.id,
+            )
             profiles = [
-                build_profile(entry.player, *records.get(entry.player_id, (0, 0)))
+                build_profile(
+                    entry.player,
+                    *records.get(entry.player_id, (0, 0)),
+                    last_role=previous.get(entry.player_id),
+                )
                 for entry in match.participants
             ]
 

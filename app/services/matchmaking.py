@@ -48,6 +48,9 @@ class PlayerProfile:
     win_rate: float
     main_role: Optional[str]
     secondary_role: Optional[str]
+    avoid_role: Optional[str]
+    # 직전 내전에서 기피 라인을 갔다면 이번에는 기피 라인 배정을 금지한다.
+    must_avoid: bool
     role_scores: Dict[str, float]
 
 @dataclass(frozen=True)
@@ -66,6 +69,8 @@ class BalanceResult:
     breakdown: Dict[str, float]
     splits: int
     evaluated: int
+    # 기피 라인 금지 제약을 지킨 결과인지. 지킬 수 있는 조합이 하나도 없으면 False.
+    bans_honoured: bool
 
 def power_of(profile: PlayerProfile, role: str) -> float:
     """해당 라인에 배정했을 때의 전투력(설계서 6장 + 6.1)."""
@@ -80,6 +85,7 @@ def power_of(profile: PlayerProfile, role: str) -> float:
         role,
         profile.main_role,
         profile.secondary_role,
+        profile.avoid_role,
     )
 
 def power_table(profiles: Sequence[PlayerProfile]) -> Dict[int, Dict[str, float]]:
@@ -88,12 +94,26 @@ def power_table(profiles: Sequence[PlayerProfile]) -> Dict[int, Dict[str, float]
         for profile in profiles
     }
 
+def is_banned(team: Sequence[PlayerProfile], order: Sequence[str]) -> bool:
+    """보상 대상자가 기피 라인에 놓이는 배정인지."""
+    return any(
+        member.must_avoid and role == member.avoid_role
+        for member, role in zip(team, order)
+    )
+
 def assignment_options(
-    team: Sequence[PlayerProfile], table: Dict[int, Dict[str, float]]
+    team: Sequence[PlayerProfile],
+    table: Dict[int, Dict[str, float]],
+    respect_bans: bool = True,
 ) -> List[Tuple[float, Tuple[float, ...], Tuple[str, ...]]]:
-    """120가지 라인 배정을 (전투력 합, ROLES 순 파워, 배정 순열)로 펼친다."""
+    """120가지 라인 배정을 (전투력 합, ROLES 순 파워, 배정 순열)로 펼친다.
+
+    respect_bans 가 True 면 기피 라인 금지를 어기는 배정은 아예 제외한다.
+    """
     options = []
     for order in permutations(ROLES):
+        if respect_bans and is_banned(team, order):
+            continue
         by_role = {
             role: table[member.player_id][role] for member, role in zip(team, order)
         }
@@ -162,10 +182,20 @@ def find_best_teams(
     profiles: Sequence[PlayerProfile],
     rng: Optional[random.Random] = None,
 ) -> BalanceResult:
+    """기피 라인 금지를 지켜 탐색하고, 지킬 수 없으면 제약을 풀고 다시 찾는다."""
     if len(profiles) != LOBBY_SIZE:
         raise ValueError(f"참가자는 {LOBBY_SIZE}명이어야 합니다. (현재 {len(profiles)}명)")
 
-    rng = rng or random
+    result = _search(profiles, rng or random, respect_bans=True)
+    if result is None:
+        result = _search(profiles, rng or random, respect_bans=False)
+    return result
+
+def _search(
+    profiles: Sequence[PlayerProfile],
+    rng: random.Random,
+    respect_bans: bool,
+) -> Optional[BalanceResult]:
     table = power_table(profiles)
     total_best = sum(max(table[p.player_id].values()) for p in profiles)
 
@@ -197,8 +227,14 @@ def find_best_teams(
         # 전투력 합이 큰 배정부터 본다. skill/role 항은 0 이상이므로
         # constant - w_fit * (sum_a + sum_b) 가 현재 최선보다 나쁘면
         # 그 아래로는 볼 필요가 없다(설계서 7장 가지치기).
-        options_a = sorted(assignment_options(team_a, table), reverse=True)
-        options_b = sorted(assignment_options(team_b, table), reverse=True)
+        options_a = sorted(
+            assignment_options(team_a, table, respect_bans), reverse=True
+        )
+        options_b = sorted(
+            assignment_options(team_b, table, respect_bans), reverse=True
+        )
+        if not options_a or not options_b:
+            continue  # 이 분할로는 기피 라인 금지를 지킬 수 없다.
         max_sum_b = options_b[0][0]
 
         split_best = float("inf")
@@ -231,6 +267,9 @@ def find_best_teams(
 
         results.append((split_best, a_index, b_index, *split_pick))
 
+    if not results:
+        return None
+
     best = min(item[0] for item in results)
     candidates = [item for item in results if item[0] <= best + TIEBREAK_EPSILON]
     _, a_index, b_index, order_a, order_b = rng.choice(candidates)
@@ -244,4 +283,5 @@ def find_best_teams(
         breakdown=balance_breakdown(plan_a, plan_b, table),
         splits=len(results),
         evaluated=evaluated,
+        bans_honoured=respect_bans,
     )

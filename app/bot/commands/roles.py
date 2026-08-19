@@ -22,10 +22,13 @@ class Roles(commands.Cog):
             return
 
         view = RolePreferenceView(
-            player.discord_id, player.main_role, player.secondary_role
+            player.discord_id,
+            player.main_role,
+            player.secondary_role,
+            player.avoid_role,
         )
         await interaction.response.send_message(
-            describe(player.main_role, player.secondary_role),
+            describe(player.main_role, player.secondary_role, player.avoid_role),
             view=view,
             ephemeral=True,
         )

@@ -178,3 +178,31 @@ async def finish_match(
     await session.commit()
     session.expire(match)
     return await get_match(session, match_id)
+
+async def last_assigned_roles(
+    session: AsyncSession,
+    player_ids: Sequence[int],
+    server_id: int,
+    exclude_match_id: Optional[int] = None,
+) -> Dict[int, str]:
+    """해당 서버에서 각 플레이어가 가장 최근에 배정받은 라인을 찾는다."""
+    if not player_ids:
+        return {}
+
+    statement = (
+        select(MatchPlayer.player_id, MatchPlayer.role, Match.id)
+        .join(Match, Match.id == MatchPlayer.match_id)
+        .where(
+            Match.discord_server_id == server_id,
+            MatchPlayer.role.isnot(None),
+            MatchPlayer.player_id.in_(player_ids),
+        )
+        .order_by(Match.id.desc())
+    )
+    if exclude_match_id is not None:
+        statement = statement.where(Match.id != exclude_match_id)
+
+    latest: Dict[int, str] = {}
+    for player_id, role, _ in await session.execute(statement):
+        latest.setdefault(player_id, role)
+    return latest

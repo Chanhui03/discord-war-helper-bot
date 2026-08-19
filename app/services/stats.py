@@ -151,8 +151,16 @@ async def refresh_player_stats(session, riot, player) -> None:
     ]
     await session.commit()
 
-def build_profile(player, custom_games: int = 0, custom_wins: int = 0) -> PlayerProfile:
-    """저장된 전적과 내전 기록에서 밸런싱용 스냅샷을 만든다."""
+def build_profile(
+    player,
+    custom_games: int = 0,
+    custom_wins: int = 0,
+    last_role: Optional[str] = None,
+) -> PlayerProfile:
+    """저장된 전적과 내전 기록에서 밸런싱용 스냅샷을 만든다.
+
+    직전 내전에서 기피 라인을 갔다면 이번에는 그 라인 배정을 금지한다.
+    """
     stats = player.stats
     return PlayerProfile(
         player_id=player.id,
@@ -164,5 +172,7 @@ def build_profile(player, custom_games: int = 0, custom_wins: int = 0) -> Player
         win_rate=stats.win_rate if stats else 0.0,
         main_role=player.main_role,
         secondary_role=player.secondary_role,
+        avoid_role=player.avoid_role,
+        must_avoid=bool(player.avoid_role and last_role == player.avoid_role),
         role_scores={row.role: row.role_score for row in player.roles},
     )

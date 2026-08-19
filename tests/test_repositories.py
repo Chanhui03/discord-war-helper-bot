@@ -243,3 +243,55 @@ async def create_second(session, player_ids, server_id):
         [build_profile(e.player) for e in match.participants], rng=random.Random(2)
     )
     return await save_teams(session, match.id, result)
+
+class TestLastAssignedRoles:
+    async def test_returns_the_most_recent_role_per_player(self, session):
+        from app.database.repositories import finish_match, last_assigned_roles
+
+        first = await TestResults()._staged_match(session, server_id=1)
+        await finish_match(session, first.id, "A")
+        ids = [entry.player_id for entry in first.participants]
+        expected = {entry.player_id: entry.role for entry in first.participants}
+
+        assert await last_assigned_roles(session, ids, 1) == expected
+
+    async def test_ignores_other_servers(self, session):
+        from app.database.repositories import last_assigned_roles
+
+        match = await TestResults()._staged_match(session, server_id=1)
+        ids = [entry.player_id for entry in match.participants]
+        assert await last_assigned_roles(session, ids, 2) == {}
+
+    async def test_can_exclude_the_current_match(self, session):
+        from app.database.repositories import last_assigned_roles
+
+        match = await TestResults()._staged_match(session, server_id=1)
+        ids = [entry.player_id for entry in match.participants]
+        assert await last_assigned_roles(session, ids, 1, exclude_match_id=match.id) == {}
+
+    async def test_empty_input(self, session):
+        from app.database.repositories import last_assigned_roles
+
+        assert await last_assigned_roles(session, [], 1) == {}
+
+    async def test_later_match_overrides_earlier_one(self, session):
+        from app.database.repositories import finish_match, last_assigned_roles
+
+        first = await TestResults()._staged_match(session, server_id=1)
+        await finish_match(session, first.id, "A")
+        ids = [entry.player_id for entry in first.participants]
+        before = await last_assigned_roles(session, ids, 1)
+
+        second = await create_second(session, ids[:5], server_id=1)
+        after = await last_assigned_roles(session, ids, 1)
+
+        # 2차전에는 인원 보충용 참가자도 있으므로 1차전 참가자만 확인한다.
+        moved = {
+            entry.player_id: entry.role
+            for entry in second.participants
+            if entry.player_id in ids
+        }
+        assert moved, "2차전에 1차전 참가자가 한 명도 없다"
+        for player_id, role in moved.items():
+            assert after[player_id] == role
+        assert any(after[pid] != before[pid] for pid in moved)
