@@ -1,5 +1,6 @@
 """Riot 응답을 플레이어 집계 지표로 변환한다."""
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from app.models.player import PlayerRole, PlayerStats
@@ -14,6 +15,9 @@ from app.services.scoring import (
 
 SOLO_QUEUE = "RANKED_SOLO_5x5"
 RECENT_MATCH_COUNT = 20
+
+# 개발용 키 한도(초당 20회)에 여유를 두고 동시 호출을 제한한다.
+MATCH_CONCURRENCY = 5
 
 def pick_solo_entry(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """솔로랭크 항목을 고른다. 없으면 None(언랭)."""
@@ -105,13 +109,22 @@ def player_score(
         performance=performance_score(avg_kda),
     )
 
+async def fetch_matches(riot, match_ids: List[str]) -> List[Dict[str, Any]]:
+    """rate limit 을 넘기지 않도록 동시 호출 수를 제한해 경기 상세를 받는다."""
+    limit = asyncio.Semaphore(MATCH_CONCURRENCY)
+
+    async def fetch(match_id: str):
+        async with limit:
+            return await riot.get_match(match_id)
+
+    return await asyncio.gather(*(fetch(match_id) for match_id in match_ids))
+
 async def refresh_player_stats(session, riot, player) -> None:
     """Riot API에서 랭크와 최근 경기를 받아 집계 테이블을 갱신한다."""
     solo = pick_solo_entry(await riot.get_league_entries(player.puuid))
 
     match_ids = await riot.get_match_ids(player.puuid, RECENT_MATCH_COUNT)
-    # rate limit 을 피하려고 순차 호출한다.
-    matches = [await riot.get_match(match_id) for match_id in match_ids]
+    matches = await fetch_matches(riot, match_ids)
     aggregate = aggregate_matches(matches, player.puuid)
 
     wins = solo["wins"] if solo else 0

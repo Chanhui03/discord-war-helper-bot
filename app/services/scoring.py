@@ -10,7 +10,10 @@ DIVISION_ORDER = ["IV", "III", "II", "I"]
 APEX_TIERS = ["MASTER", "GRANDMASTER", "CHALLENGER"]
 
 APEX_BASE_POINTS = len(TIER_ORDER) * 400  # 2800
-MAX_POINTS = APEX_BASE_POINTS + 400       # 챌린저 400LP 를 만점으로 본다.
+# 마스터 이상은 디비전 없이 LP 로만 나뉜다. 한국 서버 챌린저 컷이
+# 1000~1500LP 대이므로 그 폭만큼 잡아야 apex 구간이 뭉개지지 않는다.
+APEX_LP_RANGE = 1500
+MAX_POINTS = APEX_BASE_POINTS + APEX_LP_RANGE
 
 # 설계서 6장 가중치.
 WEIGHTS = {

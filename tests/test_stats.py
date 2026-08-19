@@ -108,3 +108,32 @@ class TestPlayerScore:
         without = player_score("GOLD", "II", 50, 0.5, 2.5)
         with_bad_role = player_score("GOLD", "II", 50, 0.5, 2.5, main_role_score=0.0)
         assert with_bad_role < without
+
+class TestFetchMatches:
+    def test_preserves_order_and_caps_concurrency(self):
+        import asyncio
+
+        from app.services.stats import MATCH_CONCURRENCY, fetch_matches
+
+        class FakeRiot:
+            def __init__(self):
+                self.active = 0
+                self.peak = 0
+                self.calls = 0
+
+            async def get_match(self, match_id):
+                self.calls += 1
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+                await asyncio.sleep(0.01)
+                self.active -= 1
+                return {"id": match_id}
+
+        riot = FakeRiot()
+        ids = [f"KR_{i}" for i in range(20)]
+        result = asyncio.run(fetch_matches(riot, ids))
+
+        assert [item["id"] for item in result] == ids
+        assert riot.calls == len(ids)
+        assert riot.peak <= MATCH_CONCURRENCY
+        assert riot.peak > 1, "동시 호출이 전혀 일어나지 않았다"

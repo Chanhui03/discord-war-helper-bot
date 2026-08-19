@@ -1,6 +1,7 @@
 import pytest
 
 from app.services.scoring import (
+    APEX_LP_RANGE,
     NEUTRAL,
     base_score,
     performance_score,
@@ -21,8 +22,19 @@ class TestTierScore:
         assert tier_score("IRON", "IV", 0) == 0.0
 
     def test_challenger_is_capped_at_100(self):
-        assert tier_score("CHALLENGER", None, 400) == 100.0
-        assert tier_score("CHALLENGER", None, 2000) == 100.0
+        assert tier_score("CHALLENGER", None, APEX_LP_RANGE) == 100.0
+        assert tier_score("CHALLENGER", None, 5000) == 100.0
+
+    def test_apex_range_is_not_flattened(self):
+        """마스터~챌린저가 한 점수로 뭉개지지 않아야 한다."""
+        master = tier_score("MASTER", None, 0)
+        grandmaster = tier_score("GRANDMASTER", None, 700)
+        challenger = tier_score("CHALLENGER", None, 1400)
+        assert master < grandmaster < challenger < 100.0
+        assert challenger - master > 30.0
+
+    def test_diamond_one_sits_just_below_master(self):
+        assert tier_score("DIAMOND", "I", 99) < tier_score("MASTER", None, 0)
 
     def test_monotonic_across_tiers_divisions_and_lp(self):
         ladder = [
