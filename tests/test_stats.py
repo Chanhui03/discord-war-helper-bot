@@ -1,7 +1,14 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.services.stats import (
+    MATCH_CONCURRENCY,
+    STATS_TTL,
     aggregate_matches,
+    fetch_matches,
+    is_fresh,
     kda,
     pick_solo_entry,
     player_score,
@@ -111,10 +118,6 @@ class TestPlayerScore:
 
 class TestFetchMatches:
     def test_preserves_order_and_caps_concurrency(self):
-        import asyncio
-
-        from app.services.stats import MATCH_CONCURRENCY, fetch_matches
-
         class FakeRiot:
             def __init__(self):
                 self.active = 0
@@ -140,25 +143,15 @@ class TestFetchMatches:
 
 class TestIsFresh:
     def test_never_refreshed(self):
-        from app.services.stats import is_fresh
-
         assert is_fresh(None) is False
 
     def test_within_ttl(self):
-        from datetime import datetime, timedelta, timezone
-
-        from app.services.stats import STATS_TTL, is_fresh
-
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
         assert is_fresh(now - STATS_TTL + timedelta(seconds=1), now) is True
         assert is_fresh(now - STATS_TTL - timedelta(seconds=1), now) is False
 
     def test_naive_timestamps_are_treated_as_utc(self):
         """SQLite 는 타임존을 저장하지 않는다."""
-        from datetime import datetime, timedelta, timezone
-
-        from app.services.stats import is_fresh
-
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
         assert is_fresh(datetime(2026, 1, 1) - timedelta(minutes=1), now) is True
         assert is_fresh(datetime(2026, 1, 1) - timedelta(hours=2), now) is False

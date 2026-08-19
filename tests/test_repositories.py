@@ -1,13 +1,21 @@
+import random
+
 import pytest
 
 from app.database.repositories import (
+    create_match,
+    custom_records,
+    finish_match,
+    get_match,
     get_player,
     join_match,
+    last_assigned_roles,
     leave_match,
     save_teams,
     upsert_player,
 )
-from app.services.stats import refresh_player_stats
+from app.services.matchmaking import LOBBY_SIZE, find_best_teams
+from app.services.stats import build_profile, refresh_player_stats
 
 pytestmark = pytest.mark.asyncio
 
@@ -38,6 +46,38 @@ class FakeRiot:
             "puuid": "p-1", "teamPosition": self.positions[index], "win": index % 2 == 0,
             "kills": 5, "deaths": 2, "assists": 5,
         }]}}
+
+async def staged_match(session, server_id=1):
+    """팀 배정까지 끝난 내전을 만든다."""
+    match = await create_match(session, server_id=server_id)
+    for i in range(LOBBY_SIZE):
+        player = await register(session, 1000 + i, f"p-{server_id}-{i}")
+        await join_match(session, match.id, player.id)
+
+    match = await get_match(session, match.id)
+    result = find_best_teams(
+        [build_profile(entry.player) for entry in match.participants],
+        rng=random.Random(1),
+    )
+    return await save_teams(session, match.id, result)
+
+async def create_second(session, player_ids, server_id):
+    """같은 참가자로 두 번째 내전을 만들어 팀까지 배정한다."""
+    match = await create_match(session, server_id=server_id)
+    extra = [
+        await register(session, 9000 + server_id * 100 + i, f"extra-{server_id}-{i}")
+        for i in range(LOBBY_SIZE - len(player_ids))
+    ]
+    for player_id in player_ids:
+        await join_match(session, match.id, player_id)
+    for player in extra:
+        await join_match(session, match.id, player.id)
+
+    match = await get_match(session, match.id)
+    result = find_best_teams(
+        [build_profile(e.player) for e in match.participants], rng=random.Random(2)
+    )
+    return await save_teams(session, match.id, result)
 
 class TestRefreshPlayerStats:
     async def test_refresh_right_after_upsert(self, session):
@@ -90,9 +130,6 @@ class TestUpsertPlayer:
 
 class TestLobby:
     async def test_join_leave_and_capacity(self, session):
-        from app.database.repositories import create_match
-        from app.services.matchmaking import LOBBY_SIZE
-
         match = await create_match(session, server_id=1)
         players = [await register(session, i, f"p-{i}") for i in range(LOBBY_SIZE + 1)]
 
@@ -109,18 +146,10 @@ class TestLobby:
         assert (await leave_match(session, match.id, players[0].id))[0] == "absent"
 
     async def test_save_teams_writes_every_assignment(self, session):
-        import random
-
-        from app.database.repositories import create_match
-        from app.services.matchmaking import LOBBY_SIZE, find_best_teams
-        from app.services.stats import build_profile
-
         match = await create_match(session, server_id=1)
         for i in range(LOBBY_SIZE):
             player = await register(session, i, f"p-{i}")
             await join_match(session, match.id, player.id)
-
-        from app.database.repositories import get_match
 
         match = await get_match(session, match.id)
         result = find_best_teams(
@@ -134,30 +163,8 @@ class TestLobby:
         assert len([e for e in saved.participants if e.team == "A"]) == 5
 
 class TestResults:
-    async def _staged_match(self, session, server_id=1):
-        """팀 배정까지 끝난 내전을 만든다."""
-        import random
-
-        from app.database.repositories import create_match, get_match
-        from app.services.matchmaking import LOBBY_SIZE, find_best_teams
-        from app.services.stats import build_profile
-
-        match = await create_match(session, server_id=server_id)
-        for i in range(LOBBY_SIZE):
-            player = await register(session, 1000 + i, f"p-{server_id}-{i}")
-            await join_match(session, match.id, player.id)
-
-        match = await get_match(session, match.id)
-        result = find_best_teams(
-            [build_profile(entry.player) for entry in match.participants],
-            rng=random.Random(1),
-        )
-        return await save_teams(session, match.id, result)
-
     async def test_finish_match_records_wins_and_scores(self, session):
-        from app.database.repositories import finish_match
-
-        match = await self._staged_match(session)
+        match = await staged_match(session)
         finished = await finish_match(session, match.id, "A")
 
         assert finished.completed is True
@@ -166,16 +173,12 @@ class TestResults:
             assert entry.win is (entry.team == "A")
 
     async def test_finishing_twice_is_rejected(self, session):
-        from app.database.repositories import finish_match
-
-        match = await self._staged_match(session)
+        match = await staged_match(session)
         assert await finish_match(session, match.id, "A") is not None
         assert await finish_match(session, match.id, "B") is None
 
     async def test_custom_records_ignore_unfinished_matches(self, session):
-        from app.database.repositories import custom_records, finish_match
-
-        match = await self._staged_match(session)
+        match = await staged_match(session)
         ids = [entry.player_id for entry in match.participants]
         assert await custom_records(session, ids, 1) == {}
 
@@ -186,9 +189,7 @@ class TestResults:
         assert all(games == 1 for games, _ in records.values())
 
     async def test_custom_records_accumulate_within_a_server(self, session):
-        from app.database.repositories import custom_records, finish_match
-
-        first = await self._staged_match(session, server_id=1)
+        first = await staged_match(session, server_id=1)
         await finish_match(session, first.id, "A")
         winner_ids = [e.player_id for e in first.participants if e.team == "A"]
 
@@ -204,9 +205,7 @@ class TestResults:
 
     async def test_custom_records_are_scoped_to_one_server(self, session):
         """설계서 5.2: 내전 성적은 해당 Discord 서버 기준으로 센다."""
-        from app.database.repositories import custom_records, finish_match
-
-        first = await self._staged_match(session, server_id=1)
+        first = await staged_match(session, server_id=1)
         await finish_match(session, first.id, "A")
         winner_ids = [e.player_id for e in first.participants if e.team == "A"]
 
@@ -220,10 +219,7 @@ class TestResults:
         assert await custom_records(session, winner_ids, 3) == {}
 
     async def test_custom_record_reaches_the_balancing_profile(self, session):
-        from app.database.repositories import custom_records, finish_match
-        from app.services.stats import build_profile
-
-        match = await self._staged_match(session)
+        match = await staged_match(session)
         await finish_match(session, match.id, "A")
         records = await custom_records(
             session, [e.player_id for e in match.participants], 1
@@ -237,39 +233,11 @@ class TestResults:
         assert won.custom > lost.custom
 
     async def test_empty_player_list_returns_empty(self, session):
-        from app.database.repositories import custom_records
-
         assert await custom_records(session, [], 1) == {}
-
-async def create_second(session, player_ids, server_id):
-    """같은 참가자로 두 번째 내전을 만들어 팀까지 배정한다."""
-    import random
-
-    from app.database.repositories import create_match, get_match
-    from app.services.matchmaking import LOBBY_SIZE, find_best_teams
-    from app.services.stats import build_profile
-
-    match = await create_match(session, server_id=server_id)
-    extra = [
-        await register(session, 9000 + server_id * 100 + i, f"extra-{server_id}-{i}")
-        for i in range(LOBBY_SIZE - len(player_ids))
-    ]
-    for player_id in player_ids:
-        await join_match(session, match.id, player_id)
-    for player in extra:
-        await join_match(session, match.id, player.id)
-
-    match = await get_match(session, match.id)
-    result = find_best_teams(
-        [build_profile(e.player) for e in match.participants], rng=random.Random(2)
-    )
-    return await save_teams(session, match.id, result)
 
 class TestLastAssignedRoles:
     async def test_returns_the_most_recent_role_per_player(self, session):
-        from app.database.repositories import finish_match, last_assigned_roles
-
-        first = await TestResults()._staged_match(session, server_id=1)
+        first = await staged_match(session, server_id=1)
         await finish_match(session, first.id, "A")
         ids = [entry.player_id for entry in first.participants]
         expected = {entry.player_id: entry.role for entry in first.participants}
@@ -277,28 +245,20 @@ class TestLastAssignedRoles:
         assert await last_assigned_roles(session, ids, 1) == expected
 
     async def test_ignores_other_servers(self, session):
-        from app.database.repositories import last_assigned_roles
-
-        match = await TestResults()._staged_match(session, server_id=1)
+        match = await staged_match(session, server_id=1)
         ids = [entry.player_id for entry in match.participants]
         assert await last_assigned_roles(session, ids, 2) == {}
 
     async def test_can_exclude_the_current_match(self, session):
-        from app.database.repositories import last_assigned_roles
-
-        match = await TestResults()._staged_match(session, server_id=1)
+        match = await staged_match(session, server_id=1)
         ids = [entry.player_id for entry in match.participants]
         assert await last_assigned_roles(session, ids, 1, exclude_match_id=match.id) == {}
 
     async def test_empty_input(self, session):
-        from app.database.repositories import last_assigned_roles
-
         assert await last_assigned_roles(session, [], 1) == {}
 
     async def test_later_match_overrides_earlier_one(self, session):
-        from app.database.repositories import finish_match, last_assigned_roles
-
-        first = await TestResults()._staged_match(session, server_id=1)
+        first = await staged_match(session, server_id=1)
         await finish_match(session, first.id, "A")
         ids = [entry.player_id for entry in first.participants]
         before = await last_assigned_roles(session, ids, 1)

@@ -38,7 +38,13 @@ def profile(pid, tier=60.0, main=None, secondary=None, win_rate=0.5,
 def ten(**kwargs):
     return [profile(i, **kwargs) for i in range(LOBBY_SIZE)]
 
-SEED = random.Random(1234)
+def seeded():
+    """테스트마다 새 난수원.
+
+    모듈 전역 Random 하나를 공유하면 소비 상태가 실행 순서에 따라 달라져
+    -k 로 하나만 돌릴 때와 전체를 돌릴 때 결과가 갈린다.
+    """
+    return random.Random(1234)
 
 class TestPowerOf:
     def test_main_role_beats_off_role(self):
@@ -106,12 +112,12 @@ class TestFindBestTeams:
             find_best_teams([profile(i) for i in range(9)])
 
     def test_searches_every_symmetric_split(self):
-        result = find_best_teams(ten(), rng=SEED)
+        result = find_best_teams(ten(), rng=seeded())
         assert result.splits == 126  # 252 / 2 (A·B 대칭 제거)
         assert 0 < result.evaluated <= 126 * 120 * 120
 
     def test_teams_partition_all_players(self):
-        result = find_best_teams(ten(), rng=SEED)
+        result = find_best_teams(ten(), rng=seeded())
         a = {m.player_id for m, _ in result.team_a.members}
         b = {m.player_id for m, _ in result.team_b.members}
         assert len(a) == len(b) == TEAM_SIZE
@@ -119,12 +125,12 @@ class TestFindBestTeams:
         assert a | b == set(range(LOBBY_SIZE))
 
     def test_every_team_covers_all_five_roles(self):
-        result = find_best_teams(ten(), rng=SEED)
+        result = find_best_teams(ten(), rng=seeded())
         for team in (result.team_a, result.team_b):
             assert {role for _, role in team.members} == set(ROLES)
 
     def test_identical_players_are_perfectly_balanced(self):
-        result = find_best_teams(ten(), rng=SEED)
+        result = find_best_teams(ten(), rng=seeded())
         assert result.score == pytest.approx(0.0)
 
     def test_strong_players_are_split_across_teams(self):
@@ -157,7 +163,7 @@ class TestFindBestTeams:
         assert len(seen) > 1, "동점 조합인데 매번 같은 팀이 나온다"
 
     def test_breakdown_matches_reported_components(self):
-        result = find_best_teams(ten(tier=70.0), rng=SEED)
+        result = find_best_teams(ten(tier=70.0), rng=seeded())
         table = power_table(ten(tier=70.0))
         assert set(result.breakdown) == {
             "skill", "role", "win_rate", "recent_form", "fit",
@@ -175,7 +181,7 @@ class TestFindBestTeams:
             for i in range(LOBBY_SIZE)
         ]
         started = time.perf_counter()
-        find_best_teams(players, rng=SEED)
+        find_best_teams(players, rng=seeded())
         assert time.perf_counter() - started < 10.0
 
 class TestRoleFitPenalty:
@@ -224,7 +230,7 @@ class TestPruningIsExact:
 
     @staticmethod
     def brute_force_best(profiles):
-        from itertools import combinations, permutations
+        from itertools import combinations
 
         from app.roles import ROLES as R
         from app.services.matchmaking import (
