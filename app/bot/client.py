@@ -12,6 +12,7 @@ EXTENSIONS = [
     "app.bot.commands.register",
     "app.bot.commands.profile",
     "app.bot.commands.roles",
+    "app.bot.commands.war",
 ]
 
 class WarBot(commands.Bot):

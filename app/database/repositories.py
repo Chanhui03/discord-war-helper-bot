@@ -1,9 +1,11 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.match import Match, MatchPlayer
 from app.models.player import Player
+from app.services.matchmaking import LOBBY_SIZE
 
 async def upsert_player(
     session: AsyncSession,
@@ -60,3 +62,55 @@ async def set_role_preference(
     player = await get_player(session, discord_id, game)
     setattr(player, field, role)
     await session.commit()
+
+async def get_open_match(session: AsyncSession, server_id: int) -> Optional[Match]:
+    """해당 서버에서 아직 끝나지 않은 내전을 찾는다."""
+    result = await session.execute(
+        select(Match)
+        .where(Match.discord_server_id == server_id, Match.completed.is_(False))
+        .order_by(Match.id.desc())
+    )
+    return result.scalars().first()
+
+async def create_match(session: AsyncSession, server_id: int) -> Match:
+    match = Match(discord_server_id=server_id)
+    session.add(match)
+    await session.commit()
+    return match
+
+async def get_match(session: AsyncSession, match_id: int) -> Optional[Match]:
+    result = await session.execute(select(Match).where(Match.id == match_id))
+    return result.scalar_one_or_none()
+
+async def join_match(
+    session: AsyncSession, match_id: int, player_id: int
+) -> Tuple[str, Optional[Match]]:
+    """참가 결과와 갱신된 내전을 돌려준다."""
+    match = await get_match(session, match_id)
+    if match is None or match.completed:
+        return "closed", None
+    if any(p.player_id == player_id for p in match.participants):
+        return "already", match
+    if len(match.participants) >= LOBBY_SIZE:
+        return "full", match
+
+    session.add(MatchPlayer(match_id=match_id, player_id=player_id))
+    await session.commit()
+    session.expire_all()  # 새 참가자의 관계까지 다시 적재한다.
+    return "joined", await get_match(session, match_id)
+
+async def leave_match(
+    session: AsyncSession, match_id: int, player_id: int
+) -> Tuple[str, Optional[Match]]:
+    match = await get_match(session, match_id)
+    if match is None or match.completed:
+        return "closed", None
+
+    entry = next((p for p in match.participants if p.player_id == player_id), None)
+    if entry is None:
+        return "absent", match
+
+    match.participants.remove(entry)
+    await session.commit()
+    session.expire_all()
+    return "left", await get_match(session, match_id)
