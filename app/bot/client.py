@@ -36,10 +36,11 @@ class WarBot(commands.Bot):
 
         await self.restore_views()
 
-        if settings.discord_guild_id:
-            guild = discord.Object(id=settings.discord_guild_id)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
+        if settings.discord_guild_ids:
+            for guild_id in settings.discord_guild_ids:
+                guild = discord.Object(id=guild_id)
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
 
