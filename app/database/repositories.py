@@ -96,7 +96,8 @@ async def join_match(
 
     session.add(MatchPlayer(match_id=match_id, player_id=player_id))
     await session.commit()
-    session.expire_all()  # 새 참가자의 관계까지 다시 적재한다.
+    # 호출자가 들고 있는 다른 객체까지 만료시키지 않도록 대상을 좁힌다.
+    session.expire(match)
     return "joined", await get_match(session, match_id)
 
 async def leave_match(
@@ -112,7 +113,7 @@ async def leave_match(
 
     match.participants.remove(entry)
     await session.commit()
-    session.expire_all()
+    session.expire(match)
     return "left", await get_match(session, match_id)
 
 async def save_teams(session: AsyncSession, match_id: int, result) -> Optional[Match]:
@@ -131,5 +132,5 @@ async def save_teams(session: AsyncSession, match_id: int, result) -> Optional[M
         entry.team, entry.role = assignment[entry.player_id]
 
     await session.commit()
-    session.expire_all()
+    session.expire(match)
     return await get_match(session, match_id)

@@ -131,6 +131,10 @@ async def refresh_player_stats(session, riot, player) -> None:
     losses = solo["losses"] if solo else 0
     total = wins + losses
 
+    # 방금 만들어진 player 는 관계가 적재된 적이 없다. 그대로 대입하면
+    # delete-orphan 정리 과정에서 lazy load 가 일어나 MissingGreenlet 이 난다.
+    await session.refresh(player, ["stats", "roles"])
+
     player.stats = PlayerStats(
         tier=solo["tier"] if solo else None,
         division=solo["rank"] if solo else None,
