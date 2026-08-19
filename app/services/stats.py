@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from app.models.player import PlayerRole, PlayerStats
 from app.roles import RIOT_POSITIONS
+from app.services.matchmaking import PlayerProfile
 from app.services.scoring import (
     base_score,
     performance_score,
@@ -131,3 +132,18 @@ async def refresh_player_stats(session, riot, player) -> None:
         PlayerRole(role=role, **values) for role, values in aggregate["roles"].items()
     ]
     await session.commit()
+
+def build_profile(player) -> PlayerProfile:
+    """저장된 전적에서 밸런싱용 스냅샷을 만든다."""
+    stats = player.stats
+    return PlayerProfile(
+        player_id=player.id,
+        display=f"{player.riot_game_name}#{player.riot_tagline}",
+        tier=tier_score(stats.tier, stats.division, stats.lp) if stats else None,
+        recent_form=stats.recent_win_rate * 100 if stats else None,
+        performance=performance_score(stats.avg_kda) if stats else None,
+        win_rate=stats.win_rate if stats else 0.0,
+        main_role=player.main_role,
+        secondary_role=player.secondary_role,
+        role_scores={row.role: row.role_score for row in player.roles},
+    )

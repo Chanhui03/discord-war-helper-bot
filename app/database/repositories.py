@@ -114,3 +114,22 @@ async def leave_match(
     await session.commit()
     session.expire_all()
     return "left", await get_match(session, match_id)
+
+async def save_teams(session: AsyncSession, match_id: int, result) -> Optional[Match]:
+    """밸런싱 결과를 참가자 스냅샷에 기록한다."""
+    match = await get_match(session, match_id)
+    if match is None:
+        return None
+
+    assignment = {}
+    for member, role in result.team_a.members:
+        assignment[member.player_id] = ("A", role)
+    for member, role in result.team_b.members:
+        assignment[member.player_id] = ("B", role)
+
+    for entry in match.participants:
+        entry.team, entry.role = assignment[entry.player_id]
+
+    await session.commit()
+    session.expire_all()
+    return await get_match(session, match_id)

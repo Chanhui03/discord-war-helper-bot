@@ -37,3 +37,43 @@ def test_full_lobby_is_marked():
     embed = lobby_embed(fake_match(LOBBY_SIZE))
     assert f"{LOBBY_SIZE} / {LOBBY_SIZE}" in embed.description
     assert embed.footer.text == "인원이 모두 찼습니다."
+
+def test_generate_button_starts_disabled():
+    from app.bot.views.lobby import LobbyView
+
+    view = LobbyView(1)
+    labels = {b.label: b for b in view.children}
+    assert set(labels) == {"참가", "취소", "팀 생성"}
+    assert labels["팀 생성"].disabled is True
+    assert labels["참가"].disabled is False
+
+def test_teams_embed_lists_both_teams_in_role_order():
+    import random
+
+    from app.bot.views.lobby import teams_embed
+    from app.roles import ROLE_LABELS, ROLES
+    from app.services.matchmaking import find_best_teams
+    from tests.test_matchmaking import profile
+
+    profiles = [
+        profile(i, tier=40.0 + i * 4, main=ROLES[i % 5]) for i in range(LOBBY_SIZE)
+    ]
+    result = find_best_teams(profiles, rng=random.Random(3))
+
+    match = SimpleNamespace(
+        id=42,
+        participants=[
+            SimpleNamespace(player_id=i, player=SimpleNamespace(discord_id=900 + i))
+            for i in range(LOBBY_SIZE)
+        ],
+    )
+    embed = teams_embed(match, result)
+
+    assert embed.title == "내전 #42 팀 구성"
+    assert "126개 분할" in embed.description
+    assert len(embed.fields) == 2
+    for field in embed.fields:
+        lines = field.value.split("\n")
+        assert len(lines) == TEAM_SIZE
+        labels = [line.split("`")[1].strip() for line in lines]
+        assert labels == [ROLE_LABELS[r] for r in ROLES]
