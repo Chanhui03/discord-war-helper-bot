@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.bot.messages import need_manage_guild
 from app.bot.views.lobby import LobbyView, lobby_embed
 from app.database.repositories import create_match, get_match, get_open_match
 from app.database.session import session_factory
@@ -33,9 +34,7 @@ class War(commands.Cog):
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:
         if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message(
-                "내전 생성은 서버 관리 권한이 있는 사람만 할 수 있습니다.", ephemeral=True
-            )
+            await interaction.response.send_message(need_manage_guild("내전 생성"), ephemeral=True)
             return
         raise error
 

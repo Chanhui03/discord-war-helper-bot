@@ -3,6 +3,7 @@ import logging
 
 import discord
 
+from app.bot.messages import NEED_REGISTER, need_manage_guild
 from app.database.repositories import (
     custom_records,
     get_match,
@@ -87,9 +88,7 @@ class LobbyView(discord.ui.View):
         async with session_factory() as session:
             player = await get_player(session, interaction.user.id)
             if player is None:
-                await interaction.response.send_message(
-                    "먼저 `/등록`으로 Riot 계정을 연결해주세요.", ephemeral=True
-                )
+                await interaction.response.send_message(NEED_REGISTER, ephemeral=True)
                 return
 
             status, match = await action(session, self.match_id, player.id)
@@ -119,9 +118,7 @@ class LobbyView(discord.ui.View):
     @discord.ui.button(label="팀 생성", style=discord.ButtonStyle.primary, disabled=True, custom_id="generate")
     async def generate(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                "팀 생성은 서버 관리 권한이 있는 사람만 할 수 있습니다.", ephemeral=True
-            )
+            await interaction.response.send_message(need_manage_guild("팀 생성"), ephemeral=True)
             return
 
         async with session_factory() as session:

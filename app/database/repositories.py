@@ -18,13 +18,7 @@ async def upsert_player(
     game: str = "lol",
 ) -> Player:
     """Discord 사용자의 게임 계정을 등록하거나 갱신한다."""
-    result = await session.execute(
-        select(Player).where(
-            Player.discord_id == discord_id,
-            Player.game == game,
-        )
-    )
-    player = result.scalar_one_or_none()
+    player = await get_player(session, discord_id, game)
 
     if player is None:
         player = Player(discord_id=discord_id, game=game)

@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.bot.messages import NEED_REGISTER
 from app.database.repositories import custom_records, get_player
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
@@ -23,9 +24,7 @@ class Profile(commands.Cog):
             )
 
         if player is None:
-            await interaction.response.send_message(
-                "먼저 `/등록`으로 Riot 계정을 연결해주세요.", ephemeral=True
-            )
+            await interaction.response.send_message(NEED_REGISTER, ephemeral=True)
             return
 
         stats = player.stats

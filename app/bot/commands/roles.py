@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.bot.messages import NEED_REGISTER
 from app.bot.views.role_select import RolePreferenceView, describe
 from app.database.repositories import get_player
 from app.database.session import session_factory
@@ -16,9 +17,7 @@ class Roles(commands.Cog):
             player = await get_player(session, interaction.user.id)
 
         if player is None:
-            await interaction.response.send_message(
-                "먼저 `/등록`으로 Riot 계정을 연결해주세요.", ephemeral=True
-            )
+            await interaction.response.send_message(NEED_REGISTER, ephemeral=True)
             return
 
         view = RolePreferenceView(

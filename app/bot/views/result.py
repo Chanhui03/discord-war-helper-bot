@@ -2,7 +2,8 @@ import logging
 
 import discord
 
-from app.database.repositories import custom_records, finish_match, get_match
+from app.bot.messages import need_manage_guild
+from app.database.repositories import custom_records, finish_match
 from app.database.session import session_factory
 from app.log import event
 from app.roles import ROLE_LABELS, ROLES
@@ -57,9 +58,7 @@ class ResultView(discord.ui.View):
 
     async def _finish(self, interaction: discord.Interaction, winner: str) -> None:
         if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                "결과 확정은 서버 관리 권한이 있는 사람만 할 수 있습니다.", ephemeral=True
-            )
+            await interaction.response.send_message(need_manage_guild("결과 확정"), ephemeral=True)
             return
 
         async with session_factory() as session:

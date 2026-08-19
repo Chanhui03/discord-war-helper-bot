@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.bot.messages import need_manage_guild
 from app.bot.views.result import ResultView, pending_embed
 from app.database.repositories import get_open_match
 from app.database.session import session_factory
@@ -34,9 +35,7 @@ class Result(commands.Cog):
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:
         if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message(
-                "결과 확정은 서버 관리 권한이 있는 사람만 할 수 있습니다.", ephemeral=True
-            )
+            await interaction.response.send_message(need_manage_guild("결과 확정"), ephemeral=True)
             return
         raise error
 
