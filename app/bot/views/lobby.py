@@ -6,16 +6,16 @@ import discord
 from app.database.repositories import (
     custom_records,
     get_match,
-    last_assigned_roles,
     get_player,
     join_match,
+    last_assigned_roles,
     leave_match,
     save_teams,
 )
 from app.database.session import session_factory
+from app.log import event
 from app.roles import ROLE_LABELS, ROLES
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams
-from app.log import event
 from app.services.stats import build_profile
 
 log = logging.getLogger(__name__)
@@ -61,8 +61,8 @@ def teams_embed(match, result) -> discord.Embed:
         )
 
     by_id = {entry.player_id: entry for entry in match.participants}
+    order = {role: index for index, role in enumerate(ROLES)}
     for label, team in (("A팀", result.team_a), ("B팀", result.team_b)):
-        order = {role: index for index, role in enumerate(ROLES)}
         lines = [
             f"`{ROLE_LABELS[role]:<2}` <@{by_id[member.player_id].player.discord_id}> "
             f"({team.role_power[role]:.1f})"
@@ -131,14 +131,13 @@ class LobbyView(discord.ui.View):
                     f"참가자가 {LOBBY_SIZE}명이어야 합니다.", ephemeral=True
                 )
                 return
+            player_ids = [entry.player_id for entry in match.participants]
             records = await custom_records(
-                session,
-                [entry.player_id for entry in match.participants],
-                match.discord_server_id,
+                session, player_ids, match.discord_server_id
             )
             previous = await last_assigned_roles(
                 session,
-                [entry.player_id for entry in match.participants],
+                player_ids,
                 match.discord_server_id,
                 exclude_match_id=match.id,
             )

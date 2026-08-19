@@ -5,8 +5,11 @@
 
 import logging
 
+def _fields(fields: dict) -> str:
+    return " ".join(f"{k}={v}" for k, v in fields.items())
+
 def event(logger: logging.Logger, name: str, **fields) -> None:
-    logger.info("%s %s", name, " ".join(f"{k}={v}" for k, v in fields.items()))
+    logger.info("%s %s", name, _fields(fields))
 
 def warn(logger: logging.Logger, name: str, **fields) -> None:
-    logger.warning("%s %s", name, " ".join(f"{k}={v}" for k, v in fields.items()))
+    logger.warning("%s %s", name, _fields(fields))

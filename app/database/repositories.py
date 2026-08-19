@@ -82,6 +82,19 @@ async def get_match(session: AsyncSession, match_id: int) -> Optional[Match]:
     result = await session.execute(select(Match).where(Match.id == match_id))
     return result.scalar_one_or_none()
 
+async def _commit_and_reload(
+    session: AsyncSession, match: Match
+) -> Optional[Match]:
+    """커밋 후 관계를 다시 적재한 내전을 돌려준다.
+
+    호출자가 들고 있는 다른 객체까지 만료시키지 않도록 대상을 좁힌다.
+    """
+    # expire 뒤에 match.id 를 읽으면 lazy load 가 일어나 MissingGreenlet 이 난다.
+    match_id = match.id
+    await session.commit()
+    session.expire(match)
+    return await get_match(session, match_id)
+
 async def join_match(
     session: AsyncSession, match_id: int, player_id: int
 ) -> Tuple[str, Optional[Match]]:
@@ -95,10 +108,7 @@ async def join_match(
         return "full", match
 
     session.add(MatchPlayer(match_id=match_id, player_id=player_id))
-    await session.commit()
-    # 호출자가 들고 있는 다른 객체까지 만료시키지 않도록 대상을 좁힌다.
-    session.expire(match)
-    return "joined", await get_match(session, match_id)
+    return "joined", await _commit_and_reload(session, match)
 
 async def leave_match(
     session: AsyncSession, match_id: int, player_id: int
@@ -112,9 +122,7 @@ async def leave_match(
         return "absent", match
 
     match.participants.remove(entry)
-    await session.commit()
-    session.expire(match)
-    return "left", await get_match(session, match_id)
+    return "left", await _commit_and_reload(session, match)
 
 async def save_teams(session: AsyncSession, match_id: int, result) -> Optional[Match]:
     """밸런싱 결과를 참가자 스냅샷에 기록한다."""
@@ -131,9 +139,7 @@ async def save_teams(session: AsyncSession, match_id: int, result) -> Optional[M
     for entry in match.participants:
         entry.team, entry.role = assignment[entry.player_id]
 
-    await session.commit()
-    session.expire(match)
-    return await get_match(session, match_id)
+    return await _commit_and_reload(session, match)
 
 async def custom_records(
     session: AsyncSession, player_ids: Sequence[int], server_id: int
@@ -175,9 +181,7 @@ async def finish_match(
     match.team_b_score = int(winner == "B")
     match.completed = True
 
-    await session.commit()
-    session.expire(match)
-    return await get_match(session, match_id)
+    return await _commit_and_reload(session, match)
 
 async def last_assigned_roles(
     session: AsyncSession,

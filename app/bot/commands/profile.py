@@ -16,12 +16,10 @@ class Profile(commands.Cog):
     async def profile(self, interaction: discord.Interaction) -> None:
         async with session_factory() as session:
             player = await get_player(session, interaction.user.id)
-            custom = (
-                (await custom_records(
-                    session, [player.id], interaction.guild_id
-                )).get(player.id, (0, 0))
+            records = (
+                await custom_records(session, [player.id], interaction.guild_id)
                 if player
-                else (0, 0)
+                else {}
             )
 
         if player is None:
@@ -47,7 +45,7 @@ class Profile(commands.Cog):
             stats.avg_kda,
             main_row.role_score if main_row else None,
         )
-        custom_games, custom_wins = custom
+        custom_games, custom_wins = records.get(player.id, (0, 0))
 
         rank = (
             f"{stats.tier} {stats.division} {stats.lp}LP"
