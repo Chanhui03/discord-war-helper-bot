@@ -7,6 +7,7 @@ from app.database.repositories import upsert_player
 from app.database.session import session_factory
 from app.services.riot.client import RiotClient
 from app.services.riot.exceptions import RiotAPIError
+from app.services.stats import refresh_player_stats
 
 class Register(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
@@ -49,8 +50,15 @@ class Register(commands.Cog):
                 )
                 return
 
+            # 전적 수집이 실패해도 계정 등록 자체는 유지한다.
+            try:
+                await refresh_player_stats(session, self.riot, player)
+                note = ""
+            except RiotAPIError as error:
+                note = f"\n전적 수집 실패: {error} — `/등록`으로 다시 시도해주세요."
+
         await interaction.followup.send(
-            f"등록 완료: **{player.riot_game_name}#{player.riot_tagline}**",
+            f"등록 완료: **{player.riot_game_name}#{player.riot_tagline}**{note}",
             ephemeral=True,
         )
 

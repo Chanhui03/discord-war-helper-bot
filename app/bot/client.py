@@ -10,6 +10,8 @@ log = logging.getLogger(__name__)
 EXTENSIONS = [
     "app.bot.commands.ping",
     "app.bot.commands.register",
+    "app.bot.commands.profile",
+    "app.bot.commands.roles",
 ]
 
 class WarBot(commands.Bot):

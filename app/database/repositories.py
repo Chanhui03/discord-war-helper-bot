@@ -1,3 +1,5 @@
+from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,3 +35,28 @@ async def upsert_player(
 
     await session.commit()
     return player
+
+async def get_player(
+    session: AsyncSession,
+    discord_id: int,
+    game: str = "lol",
+) -> Optional[Player]:
+    result = await session.execute(
+        select(Player).where(
+            Player.discord_id == discord_id,
+            Player.game == game,
+        )
+    )
+    return result.scalar_one_or_none()
+
+async def set_role_preference(
+    session: AsyncSession,
+    discord_id: int,
+    field: str,
+    role: str,
+    game: str = "lol",
+) -> None:
+    """main_role 또는 secondary_role 한 칸만 갱신한다."""
+    player = await get_player(session, discord_id, game)
+    setattr(player, field, role)
+    await session.commit()
