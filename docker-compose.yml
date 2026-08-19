@@ -3,23 +3,26 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: war
-      POSTGRES_PASSWORD: war
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-war}
       POSTGRES_DB: war_helper
     ports:
-      - "5432:5432"
+      # 로컬 psql 접속용. 공개 IP 가 붙은 서버에서 인터넷에 열리지 않도록
+      # 루프백에만 바인딩한다. 봇은 compose 네트워크로 db 에 직접 붙는다.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U war -d war_helper"]
       interval: 5s
       retries: 5
+    restart: unless-stopped
 
   bot:
     build: .
     env_file: .env
     environment:
       # 컨테이너 안에서는 호스트가 localhost 가 아니라 db 다.
-      DATABASE_URL: postgresql+asyncpg://war:war@db:5432/war_helper
+      DATABASE_URL: postgresql+asyncpg://war:${POSTGRES_PASSWORD:-war}@db:5432/war_helper
     depends_on:
       db:
         condition: service_healthy
