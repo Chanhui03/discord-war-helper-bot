@@ -1,0 +1,2 @@
+class RiotAPIError(Exception):
+    pass
