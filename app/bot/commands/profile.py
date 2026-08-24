@@ -3,7 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from app.bot.messages import NEED_REGISTER
-from app.database.repositories import custom_records, get_player
+from app.database.repositories import custom_records, custom_stats, get_player
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
 from app.services.stats import player_score
@@ -21,6 +21,11 @@ class Profile(commands.Cog):
                 await custom_records(session, [player.id], interaction.guild_id)
                 if player
                 else {}
+            )
+            recorded = (
+                await custom_stats(session, player.id, interaction.guild_id)
+                if player
+                else None
             )
 
         if player is None:
@@ -64,14 +69,18 @@ class Profile(commands.Cog):
             name="최근 폼",
             value=f"승률 {stats.recent_win_rate:.1%}\nKDA {stats.avg_kda:.2f}",
         )
-        embed.add_field(
-            name="내전 전적",
-            value=(
-                f"{custom_games}전 {custom_wins}승 ({custom_wins / custom_games:.1%})"
-                if custom_games
-                else "기록 없음"
-            ),
+        custom = (
+            f"{custom_games}전 {custom_wins}승 ({custom_wins / custom_games:.1%})"
+            if custom_games
+            else "기록 없음"
         )
+        if recorded:
+            games, custom_kda, avg_cs, avg_damage = recorded
+            custom += (
+                f"\nKDA {custom_kda:.2f} · CS {avg_cs:.0f} · 딜 {avg_damage:,.0f}"
+                f"\n-# {games}경기 전적 파일 기준"
+            )
+        embed.add_field(name="내전 전적", value=custom)
         embed.add_field(
             name="선호 라인",
             value=(

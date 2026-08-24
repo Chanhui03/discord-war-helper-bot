@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.match import Match, MatchPlayer
 from app.models.player import Player
 from app.services.matchmaking import LOBBY_SIZE
+from app.services.replay import GameRecord, riot_id_key
 
 async def upsert_player(
     session: AsyncSession,
@@ -160,6 +161,41 @@ async def custom_records(
     )
     return {row.player_id: (row.games, int(row.wins or 0)) for row in result}
 
+async def custom_stats(
+    session: AsyncSession, player_id: int, server_id: int
+) -> Optional[Tuple[int, float, float, float]]:
+    """사설 전적 파일로 기록된 내전의 (경기 수, KDA, 평균 CS, 평균 딜).
+
+    버튼으로만 확정한 내전은 개인 성적이 비어 있으므로 집계에서 뺀다.
+    """
+    result = await session.execute(
+        select(
+            func.count().label("games"),
+            func.sum(MatchPlayer.kills).label("kills"),
+            func.sum(MatchPlayer.deaths).label("deaths"),
+            func.sum(MatchPlayer.assists).label("assists"),
+            func.avg(MatchPlayer.cs).label("cs"),
+            func.avg(MatchPlayer.damage).label("damage"),
+        )
+        .join(Match, Match.id == MatchPlayer.match_id)
+        .where(
+            Match.completed.is_(True),
+            Match.discord_server_id == server_id,
+            MatchPlayer.player_id == player_id,
+            MatchPlayer.kills.isnot(None),
+        )
+    )
+    row = result.one()
+    if not row.games:
+        return None
+
+    return (
+        row.games,
+        (row.kills + row.assists) / max(row.deaths, 1),
+        float(row.cs),
+        float(row.damage),
+    )
+
 async def finish_match(
     session: AsyncSession, match_id: int, winner: str
 ) -> Optional[Match]:
@@ -176,6 +212,49 @@ async def finish_match(
     match.completed = True
 
     return await _commit_and_reload(session, match)
+
+async def finish_match_with_records(
+    session: AsyncSession, match_id: int, game: GameRecord
+) -> Tuple[str, Optional[Match]]:
+    """사설 전적 기록으로 승패와 개인 성적을 함께 확정한다."""
+    match = await get_match(session, match_id)
+    if match is None or match.completed:
+        return "closed", None
+
+    records = game.by_riot_id()
+    paired = [
+        (
+            entry,
+            records[
+                riot_id_key(entry.player.riot_game_name, entry.player.riot_tagline)
+            ],
+        )
+        for entry in match.participants
+    ]
+
+    # 로비에서 진영을 바꿔 들어갔다면 우리 A/B 와 실제 승패가 어긋난다. 틀린 승리
+    # 팀은 custom_records 집계까지 오염시키므로, 쓰기 전에 확인하고 아무것도 남기지
+    # 않는다. (여기서 rollback 을 하면 호출자가 든 객체까지 만료된다)
+    a_won = {record.win for entry, record in paired if entry.team == "A"}
+    b_won = {record.win for entry, record in paired if entry.team == "B"}
+    if len(a_won) != 1 or len(b_won) != 1 or a_won == b_won:
+        return "mismatch", None
+
+    for entry, record in paired:
+        entry.win = record.win
+        entry.kills = record.kills
+        entry.deaths = record.deaths
+        entry.assists = record.assists
+        entry.cs = record.cs
+        entry.damage = record.damage
+        entry.gold = record.gold
+
+    winner = "A" if a_won == {True} else "B"
+    match.team_a_score = int(winner == "A")
+    match.team_b_score = int(winner == "B")
+    match.completed = True
+
+    return winner, await _commit_and_reload(session, match)
 
 async def last_assigned_roles(
     session: AsyncSession,

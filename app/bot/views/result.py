@@ -22,6 +22,12 @@ def team_lines(match, team: str, records=None) -> str:
             games, wins = records.get(entry.player_id, (0, 0))
             line += f" — 내전 {games}전 {wins}승 ({wins / games:.0%})" if games else " — 내전 첫 경기"
         lines.append(line)
+        # 사설 전적 파일로 확정한 내전만 개인 성적이 채워져 있다.
+        if entry.kills is not None:
+            lines.append(
+                f"-# {entry.kills}/{entry.deaths}/{entry.assists} · "
+                f"CS {entry.cs} · 딜 {entry.damage:,} · 골드 {entry.gold:,}"
+            )
     return "\n".join(lines)
 
 def pending_embed(match) -> discord.Embed:

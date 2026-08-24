@@ -5,7 +5,9 @@ import pytest
 from app.database.repositories import (
     create_match,
     custom_records,
+    custom_stats,
     finish_match,
+    finish_match_with_records,
     get_match,
     get_player,
     join_match,
@@ -15,6 +17,7 @@ from app.database.repositories import (
     upsert_player,
 )
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams
+from app.services.replay import GameRecord, ParticipantRecord, riot_id_key
 from app.services.stats import build_profile, refresh_player_stats
 
 pytestmark = pytest.mark.asyncio
@@ -276,3 +279,118 @@ class TestLastAssignedRoles:
         for player_id, role in moved.items():
             assert after[player_id] == role
         assert any(after[pid] != before[pid] for pid in moved)
+
+async def named_match(session, server_id=5):
+    """참가자마다 게임이름이 다른, 팀 배정까지 끝난 내전.
+
+    사설 전적은 게임이름#태그로 맞추므로 이름이 겹치면 검증이 안 된다.
+    """
+    match = await create_match(session, server_id=server_id)
+    for i in range(LOBBY_SIZE):
+        player = await register(session, 2000 + i, f"named-{i}", name=f"플레이어{i}")
+        await join_match(session, match.id, player.id)
+
+    match = await get_match(session, match.id)
+    result = find_best_teams(
+        [build_profile(entry.player) for entry in match.participants],
+        rng=random.Random(3),
+    )
+    return await save_teams(session, match.id, result)
+
+def game_for(match, winner="A", swap=()):
+    """배정된 팀 그대로 winner 팀이 이긴 기록. swap 의 인덱스는 승패를 뒤집는다."""
+    return GameRecord(
+        game_id=1,
+        created_at=1,
+        participants=tuple(
+            ParticipantRecord(
+                riot_id=riot_id_key(
+                    entry.player.riot_game_name, entry.player.riot_tagline
+                ),
+                team_id=100 if entry.team == "A" else 200,
+                win=(entry.team == winner) is (index not in swap),
+                kills=index,
+                deaths=1,
+                assists=2,
+                cs=100 + index,
+                damage=1000 * index,
+                gold=500 * index,
+            )
+            for index, entry in enumerate(match.participants)
+        ),
+    )
+
+class TestRecordedResults:
+    async def test_every_participant_gets_their_stats(self, session):
+        match = await named_match(session)
+        status, saved = await finish_match_with_records(
+            session, match.id, game_for(match)
+        )
+
+        assert status == "A"
+        assert saved.completed is True
+        assert (saved.team_a_score, saved.team_b_score) == (1, 0)
+        for index, entry in enumerate(saved.participants):
+            assert (entry.kills, entry.deaths, entry.assists) == (index, 1, 2)
+            assert entry.cs == 100 + index
+            assert entry.gold == 500 * index
+            assert entry.win is (entry.team == "A")
+
+    async def test_winner_comes_from_the_file(self, session):
+        match = await named_match(session)
+        status, saved = await finish_match_with_records(
+            session, match.id, game_for(match, winner="B")
+        )
+
+        assert status == "B"
+        assert (saved.team_a_score, saved.team_b_score) == (0, 1)
+
+    async def test_sides_that_do_not_line_up_are_rejected(self, session):
+        """로비에서 진영을 바꿔 들어가면 승리 팀을 특정할 수 없다."""
+        match = await named_match(session)
+        status, saved = await finish_match_with_records(
+            session, match.id, game_for(match, swap=(0,))
+        )
+
+        assert (status, saved) == ("mismatch", None)
+        assert (await get_match(session, match.id)).completed is False
+
+    async def test_finishing_twice_is_rejected(self, session):
+        match = await named_match(session)
+        assert (await finish_match_with_records(session, match.id, game_for(match)))[0] == "A"
+        status, _ = await finish_match_with_records(session, match.id, game_for(match))
+        assert status == "closed"
+
+    async def test_result_reaches_the_custom_record(self, session):
+        match = await named_match(session)
+        _, saved = await finish_match_with_records(session, match.id, game_for(match))
+
+        records = await custom_records(
+            session, [entry.player_id for entry in saved.participants], 5
+        )
+        for entry in saved.participants:
+            assert records[entry.player_id] == (1, int(entry.team == "A"))
+
+class TestCustomStats:
+    async def test_averages_come_from_recorded_matches(self, session):
+        match = await named_match(session)
+        _, saved = await finish_match_with_records(session, match.id, game_for(match))
+        entry = saved.participants[3]
+
+        games, kda, cs, damage = await custom_stats(session, entry.player_id, 5)
+        assert games == 1
+        assert kda == pytest.approx((entry.kills + entry.assists) / entry.deaths)
+        assert (cs, damage) == (entry.cs, entry.damage)
+
+    async def test_button_only_results_are_excluded(self, session):
+        """버튼으로 확정한 내전은 개인 성적이 비어 있어 평균에 넣을 수 없다."""
+        match = await named_match(session)
+        finished = await finish_match(session, match.id, "A")
+
+        assert await custom_stats(session, finished.participants[0].player_id, 5) is None
+
+    async def test_other_servers_are_excluded(self, session):
+        match = await named_match(session)
+        _, saved = await finish_match_with_records(session, match.id, game_for(match))
+
+        assert await custom_stats(session, saved.participants[0].player_id, 99) is None
