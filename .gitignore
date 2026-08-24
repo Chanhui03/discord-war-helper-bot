@@ -2,3 +2,5 @@ venv/
 .env
 __pycache__/
 .pytest_cache/
+war_helper.db
+.env.bak-*
