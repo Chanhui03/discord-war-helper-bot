@@ -76,12 +76,19 @@ class MatchSpectator(Base):
     discord_id: Mapped[int] = mapped_column(BigInteger)
 
 class MatchRating(Base):
-    """참가자가 다른 참가자에게 남긴 평점. MVP 는 이 평균에서 나온다."""
+    """경기 후 남긴 평점. MVP 는 이 평균에서 나온다.
+
+    평가는 관전자도 할 수 있어 평가자에게는 player 행이 없을 수 있다. 그래서
+    rater 는 Discord 사용자로 두고, 대상만 참가자(player_id)로 묶는다.
+    """
 
     __tablename__ = "match_ratings"
     __table_args__ = (
         UniqueConstraint(
-            "match_id", "rater_id", "target_id", name="uq_match_ratings_rater_target"
+            "match_id",
+            "rater_discord_id",
+            "target_id",
+            name="uq_match_ratings_rater_target",
         ),
     )
 
@@ -89,6 +96,6 @@ class MatchRating(Base):
     match_id: Mapped[int] = mapped_column(
         ForeignKey("matches.id", ondelete="CASCADE"), index=True
     )
-    rater_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
+    rater_discord_id: Mapped[int] = mapped_column(BigInteger)
     target_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
     score: Mapped[int] = mapped_column(Integer)

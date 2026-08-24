@@ -328,13 +328,17 @@ async def last_assigned_roles(
     return latest
 
 async def save_rating(
-    session: AsyncSession, match_id: int, rater_id: int, target_id: int, score: int
+    session: AsyncSession,
+    match_id: int,
+    rater_discord_id: int,
+    target_id: int,
+    score: int,
 ) -> None:
     """평점을 남긴다. 같은 대상에 다시 매기면 덮어쓴다."""
     result = await session.execute(
         select(MatchRating).where(
             MatchRating.match_id == match_id,
-            MatchRating.rater_id == rater_id,
+            MatchRating.rater_discord_id == rater_discord_id,
             MatchRating.target_id == target_id,
         )
     )
@@ -344,7 +348,7 @@ async def save_rating(
         session.add(
             MatchRating(
                 match_id=match_id,
-                rater_id=rater_id,
+                rater_discord_id=rater_discord_id,
                 target_id=target_id,
                 score=score,
             )
@@ -355,12 +359,13 @@ async def save_rating(
     await session.commit()
 
 async def ratings_by_rater(
-    session: AsyncSession, match_id: int, rater_id: int
+    session: AsyncSession, match_id: int, rater_discord_id: int
 ) -> Dict[int, int]:
     """한 사람이 이 내전에서 남긴 평점. 평점 창에 이미 매긴 값을 표시하는 데 쓴다."""
     result = await session.execute(
         select(MatchRating.target_id, MatchRating.score).where(
-            MatchRating.match_id == match_id, MatchRating.rater_id == rater_id
+            MatchRating.match_id == match_id,
+            MatchRating.rater_discord_id == rater_discord_id,
         )
     )
     return {row.target_id: row.score for row in result}

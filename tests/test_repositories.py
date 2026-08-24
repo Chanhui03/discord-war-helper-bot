@@ -457,42 +457,51 @@ class TestRatings:
     async def test_rating_is_stored_and_averaged(self, session):
         match = await named_match(session)
         await finish_match_with_records(session, match.id, game_for(match))
-        [a, b, c] = [e.player_id for e in match.participants[:3]]
+        [c] = [e.player_id for e in match.participants[2:3]]
 
-        await save_rating(session, match.id, rater_id=a, target_id=c, score=5)
-        await save_rating(session, match.id, rater_id=b, target_id=c, score=4)
+        await save_rating(session, match.id, 2000, target_id=c, score=9)
+        await save_rating(session, match.id, 2001, target_id=c, score=8)
 
-        assert (await match_ratings(session, match.id))[c] == (4.5, 2)
+        assert (await match_ratings(session, match.id))[c] == (8.5, 2)
 
     async def test_rerating_overwrites_instead_of_adding(self, session):
         match = await named_match(session)
-        [a, b] = [e.player_id for e in match.participants[:2]]
+        b = match.participants[1].player_id
 
-        await save_rating(session, match.id, a, b, 1)
-        await save_rating(session, match.id, a, b, 5)
+        await save_rating(session, match.id, 2000, b, 1)
+        await save_rating(session, match.id, 2000, b, 10)
 
-        assert (await match_ratings(session, match.id))[b] == (5.0, 1)
+        assert (await match_ratings(session, match.id))[b] == (10.0, 1)
 
     async def test_ratings_by_rater_shows_only_my_scores(self, session):
         match = await named_match(session)
-        [a, b, c] = [e.player_id for e in match.participants[:3]]
+        b = match.participants[1].player_id
 
-        await save_rating(session, match.id, a, b, 3)
-        await save_rating(session, match.id, c, b, 5)
+        await save_rating(session, match.id, 2000, b, 3)
+        await save_rating(session, match.id, 2002, b, 9)
 
-        assert await ratings_by_rater(session, match.id, a) == {b: 3}
+        assert await ratings_by_rater(session, match.id, 2000) == {b: 3}
+
+    async def test_spectators_can_rate(self, session):
+        """관전자는 player 행이 없어도 평가자가 될 수 있다."""
+        match = await named_match(session)
+        await watch_match(session, match.id, 8888)
+        b = match.participants[1].player_id
+
+        await save_rating(session, match.id, 8888, b, 7)
+        assert (await match_ratings(session, match.id))[b] == (7.0, 1)
 
     async def test_mvp_is_the_highest_average(self, session):
         match = await named_match(session)
-        [a, b, c] = [e.player_id for e in match.participants[:3]]
+        [b, c] = [e.player_id for e in match.participants[1:3]]
 
-        await save_rating(session, match.id, a, b, 3)
-        await save_rating(session, match.id, a, c, 5)
+        await save_rating(session, match.id, 2000, b, 6)
+        await save_rating(session, match.id, 2000, c, 9)
 
         assert pick_mvp(await match_ratings(session, match.id)) == c
 
     async def test_ties_are_broken_by_vote_count(self):
-        assert pick_mvp({1: (4.0, 3), 2: (4.0, 5)}) == 2
+        assert pick_mvp({1: (8.0, 3), 2: (8.0, 5)}) == 2
 
     async def test_no_ratings_means_no_mvp(self):
         assert pick_mvp({}) is None
@@ -501,7 +510,7 @@ class TestMvpCounts:
     async def test_counts_only_completed_matches(self, session):
         match = await named_match(session)
         [a, b] = [e.player_id for e in match.participants[:2]]
-        await save_rating(session, match.id, a, b, 5)
+        await save_rating(session, match.id, 2000, b, 10)
 
         assert await mvp_counts(session, [a, b], 5) == {a: 0, b: 0}
 
@@ -511,7 +520,7 @@ class TestMvpCounts:
     async def test_scoped_to_one_server(self, session):
         match = await named_match(session)
         [a, b] = [e.player_id for e in match.participants[:2]]
-        await save_rating(session, match.id, a, b, 5)
+        await save_rating(session, match.id, 2000, b, 10)
         await finish_match_with_records(session, match.id, game_for(match))
 
         assert await mvp_counts(session, [a, b], 99) == {a: 0, b: 0}

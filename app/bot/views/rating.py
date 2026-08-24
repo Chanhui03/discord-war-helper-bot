@@ -1,11 +1,12 @@
-"""경기 후 참가자 상호 평점. 평균이 가장 높은 사람이 MVP 가 된다."""
+"""경기 후 평점. 평균이 가장 높은 사람이 MVP 가 된다.
+
+참가자와 관전자 모두 평가할 수 있어 평가자를 Discord 사용자로 다룬다.
+"""
 
 import discord
 
-from app.bot.messages import NEED_REGISTER
 from app.database.repositories import (
     get_match,
-    get_player,
     match_ratings,
     pick_mvp,
     ratings_by_rater,
@@ -14,9 +15,11 @@ from app.database.repositories import (
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
 
-SCORES = [1, 2, 3, 4, 5]
+SCORES = list(range(1, 11))
+# Discord 버튼은 한 줄에 5개까지다. 0번 줄은 대상 선택이 쓴다.
+BUTTONS_PER_ROW = 5
 
-NOT_A_PARTICIPANT = "이 내전에 참가한 사람만 평점을 남길 수 있습니다."
+NOT_INVOLVED = "이 내전의 참가자나 관전자만 평점을 남길 수 있습니다."
 
 def mvp_line(match, ratings) -> str:
     """MVP 한 줄. 평점이 하나도 없으면 안내 문구."""
@@ -49,10 +52,18 @@ def rating_embed(match, ratings) -> discord.Embed:
         embed.add_field(name=f"{team}팀", value="\n".join(lines))
     return embed
 
+def targets(match, rater_discord_id: int):
+    """평가 대상. 본인은 뺀다. 관전자는 10명 전부를 평가한다."""
+    return [
+        entry
+        for entry in match.participants
+        if entry.player.discord_id != rater_discord_id
+    ]
+
 class TargetSelect(discord.ui.Select):
     """평가할 사람을 고른다. 이미 준 점수는 설명에 보여준다."""
 
-    def __init__(self, match, rater_id: int, given) -> None:
+    def __init__(self, match, rater_discord_id: int, given) -> None:
         options = [
             discord.SelectOption(
                 label=f"{ROLE_LABELS[entry.role]} · {entry.player.riot_game_name}",
@@ -63,10 +74,9 @@ class TargetSelect(discord.ui.Select):
                     else f"{entry.team}팀 · 아직 안 매김"
                 ),
             )
-            for entry in match.participants
-            if entry.player_id != rater_id
+            for entry in targets(match, rater_discord_id)
         ]
-        super().__init__(placeholder="평가할 사람", options=options)
+        super().__init__(placeholder="평가할 사람", options=options, row=0)
 
     async def callback(self, interaction: discord.Interaction) -> None:
         self.view.target_id = int(self.values[0])
@@ -74,7 +84,11 @@ class TargetSelect(discord.ui.Select):
 
 class ScoreButton(discord.ui.Button):
     def __init__(self, score: int) -> None:
-        super().__init__(label=str(score), style=discord.ButtonStyle.primary, row=1)
+        super().__init__(
+            label=str(score),
+            style=discord.ButtonStyle.primary,
+            row=1 + (score - 1) // BUTTONS_PER_ROW,
+        )
         self.score = score
 
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -87,10 +101,16 @@ class ScoreButton(discord.ui.Button):
 
         async with session_factory() as session:
             await save_rating(
-                session, view.match_id, view.rater_id, view.target_id, self.score
+                session,
+                view.match_id,
+                view.rater_discord_id,
+                view.target_id,
+                self.score,
             )
             match = await get_match(session, view.match_id)
-            given = await ratings_by_rater(session, view.match_id, view.rater_id)
+            given = await ratings_by_rater(
+                session, view.match_id, view.rater_discord_id
+            )
 
         view.target_id = None
         view.clear_items()
@@ -100,20 +120,20 @@ class ScoreButton(discord.ui.Button):
 class RatingPanel(discord.ui.View):
     """평가자 한 명에게만 보이는 임시 창. 여러 명을 이어서 매길 수 있다."""
 
-    def __init__(self, match, rater_id: int, given) -> None:
+    def __init__(self, match, rater_discord_id: int, given) -> None:
         super().__init__(timeout=600)
         self.match_id = match.id
-        self.rater_id = rater_id
+        self.rater_discord_id = rater_discord_id
         self.target_id = None
         self.build(match, given)
 
     def build(self, match, given) -> None:
-        self.add_item(TargetSelect(match, self.rater_id, given))
+        self.add_item(TargetSelect(match, self.rater_discord_id, given))
         for score in SCORES:
             self.add_item(ScoreButton(score))
 
     def summary(self, match, given) -> str:
-        total = len(match.participants) - 1
+        total = len(targets(match, self.rater_discord_id))
         return f"평가할 사람을 고르고 점수를 누르세요. **{len(given)} / {total}명** 완료"
 
 class RatingView(discord.ui.View):
@@ -128,19 +148,21 @@ class RatingView(discord.ui.View):
     @discord.ui.button(label="평점 남기기", style=discord.ButtonStyle.primary, custom_id="rate")
     async def rate(self, interaction: discord.Interaction, button: discord.ui.Button):
         async with session_factory() as session:
-            player = await get_player(session, interaction.user.id)
-            if player is None:
-                await interaction.response.send_message(NEED_REGISTER, ephemeral=True)
-                return
-
             match = await get_match(session, self.match_id)
-            if not any(e.player_id == player.id for e in match.participants):
-                await interaction.response.send_message(NOT_A_PARTICIPANT, ephemeral=True)
+            # 관전자는 Riot 계정이 없으므로 Discord 사용자로만 확인한다.
+            involved = any(
+                entry.player.discord_id == interaction.user.id
+                for entry in match.participants
+            ) or any(
+                viewer.discord_id == interaction.user.id for viewer in match.spectators
+            )
+            if not involved:
+                await interaction.response.send_message(NOT_INVOLVED, ephemeral=True)
                 return
 
-            given = await ratings_by_rater(session, self.match_id, player.id)
+            given = await ratings_by_rater(session, self.match_id, interaction.user.id)
 
-        panel = RatingPanel(match, player.id, given)
+        panel = RatingPanel(match, interaction.user.id, given)
         await interaction.response.send_message(
             panel.summary(match, given), view=panel, ephemeral=True
         )
