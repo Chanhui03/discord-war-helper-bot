@@ -3,10 +3,13 @@ from typing import Dict, Optional, Sequence, Tuple
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.match import Match, MatchPlayer
+from app.models.match import Match, MatchPlayer, MatchRating, MatchSpectator
 from app.models.player import Player
 from app.services.matchmaking import LOBBY_SIZE
 from app.services.replay import GameRecord, riot_id_key
+
+# 재시작 때 평점 버튼을 되살릴 내전 수.
+RECENT_MATCH_LIMIT = 20
 
 async def upsert_player(
     session: AsyncSession,
@@ -102,6 +105,14 @@ async def join_match(
     if len(match.participants) >= LOBBY_SIZE:
         return "full", match
 
+    # 관전 중이었다면 참가로 옮긴다. 관전 자리는 제한이 없어 조용히 바꿔도 된다.
+    player = await session.get(Player, player_id)
+    viewer = next(
+        (v for v in match.spectators if v.discord_id == player.discord_id), None
+    )
+    if viewer is not None:
+        match.spectators.remove(viewer)
+
     session.add(MatchPlayer(match_id=match_id, player_id=player_id))
     return "joined", await _commit_and_reload(session, match)
 
@@ -117,6 +128,38 @@ async def leave_match(
         return "absent", match
 
     match.participants.remove(entry)
+    return "left", await _commit_and_reload(session, match)
+
+async def watch_match(
+    session: AsyncSession, match_id: int, discord_id: int
+) -> Tuple[str, Optional[Match]]:
+    """관전자로 등록한다. Riot 계정 등록은 요구하지 않는다."""
+    match = await get_match(session, match_id)
+    if match is None or match.completed:
+        return "closed", None
+    if any(viewer.discord_id == discord_id for viewer in match.spectators):
+        return "already", match
+    # 10자리가 걸린 쪽이라 참가자는 스스로 취소하게 한다.
+    if any(entry.player.discord_id == discord_id for entry in match.participants):
+        return "playing", match
+
+    session.add(MatchSpectator(match_id=match_id, discord_id=discord_id))
+    return "watching", await _commit_and_reload(session, match)
+
+async def unwatch_match(
+    session: AsyncSession, match_id: int, discord_id: int
+) -> Tuple[str, Optional[Match]]:
+    match = await get_match(session, match_id)
+    if match is None or match.completed:
+        return "closed", None
+
+    viewer = next(
+        (v for v in match.spectators if v.discord_id == discord_id), None
+    )
+    if viewer is None:
+        return "absent", match
+
+    match.spectators.remove(viewer)
     return "left", await _commit_and_reload(session, match)
 
 async def save_teams(session: AsyncSession, match_id: int, result) -> Optional[Match]:
@@ -284,7 +327,110 @@ async def last_assigned_roles(
         latest.setdefault(player_id, role)
     return latest
 
+async def save_rating(
+    session: AsyncSession, match_id: int, rater_id: int, target_id: int, score: int
+) -> None:
+    """평점을 남긴다. 같은 대상에 다시 매기면 덮어쓴다."""
+    result = await session.execute(
+        select(MatchRating).where(
+            MatchRating.match_id == match_id,
+            MatchRating.rater_id == rater_id,
+            MatchRating.target_id == target_id,
+        )
+    )
+    rating = result.scalar_one_or_none()
+
+    if rating is None:
+        session.add(
+            MatchRating(
+                match_id=match_id,
+                rater_id=rater_id,
+                target_id=target_id,
+                score=score,
+            )
+        )
+    else:
+        rating.score = score
+
+    await session.commit()
+
+async def ratings_by_rater(
+    session: AsyncSession, match_id: int, rater_id: int
+) -> Dict[int, int]:
+    """한 사람이 이 내전에서 남긴 평점. 평점 창에 이미 매긴 값을 표시하는 데 쓴다."""
+    result = await session.execute(
+        select(MatchRating.target_id, MatchRating.score).where(
+            MatchRating.match_id == match_id, MatchRating.rater_id == rater_id
+        )
+    )
+    return {row.target_id: row.score for row in result}
+
+async def match_ratings(
+    session: AsyncSession, match_id: int
+) -> Dict[int, Tuple[float, int]]:
+    """이 내전에서 플레이어별 (평균 평점, 받은 표 수)."""
+    result = await session.execute(
+        select(
+            MatchRating.target_id,
+            func.avg(MatchRating.score).label("average"),
+            func.count().label("votes"),
+        )
+        .where(MatchRating.match_id == match_id)
+        .group_by(MatchRating.target_id)
+    )
+    return {row.target_id: (float(row.average), row.votes) for row in result}
+
+def pick_mvp(ratings: Dict[int, Tuple[float, int]]) -> Optional[int]:
+    """평균이 가장 높은 플레이어. 동점이면 표를 더 많이 받은 쪽이 이긴다."""
+    if not ratings:
+        return None
+    return max(ratings, key=lambda player_id: ratings[player_id])
+
+async def mvp_counts(
+    session: AsyncSession, player_ids: Sequence[int], server_id: int
+) -> Dict[int, int]:
+    """해당 서버에서 각자 MVP 를 몇 번 했는지.
+
+    custom_records 와 같은 이유로 컬럼에 저장하지 않는다. 평점은 결과 확정 뒤에도
+    계속 들어올 수 있어서, 저장해 두면 최신 평점과 어긋난다.
+    """
+    if not player_ids:
+        return {}
+
+    result = await session.execute(
+        select(MatchRating.match_id, MatchRating.target_id, func.avg(MatchRating.score), func.count())
+        .join(Match, Match.id == MatchRating.match_id)
+        .where(Match.completed.is_(True), Match.discord_server_id == server_id)
+        .group_by(MatchRating.match_id, MatchRating.target_id)
+    )
+
+    per_match: Dict[int, Dict[int, Tuple[float, int]]] = {}
+    for match_id, target_id, average, votes in result:
+        per_match.setdefault(match_id, {})[target_id] = (float(average), votes)
+
+    counts = {player_id: 0 for player_id in player_ids}
+    for ratings in per_match.values():
+        winner = pick_mvp(ratings)
+        if winner in counts:
+            counts[winner] += 1
+    return counts
+
 async def open_matches(session: AsyncSession) -> Sequence[Match]:
     """아직 끝나지 않은 내전 전부. 재시작 시 버튼을 다시 등록하는 데 쓴다."""
     result = await session.execute(select(Match).where(Match.completed.is_(False)))
+    return result.scalars().all()
+
+async def recently_completed(
+    session: AsyncSession, limit: int = RECENT_MATCH_LIMIT
+) -> Sequence[Match]:
+    """끝난 내전 중 최근 것들. 평점 버튼을 다시 등록하는 데 쓴다.
+
+    평점은 경기 직후에 몰리므로 전부 복구할 필요가 없다.
+    """
+    result = await session.execute(
+        select(Match)
+        .where(Match.completed.is_(True))
+        .order_by(Match.id.desc())
+        .limit(limit)
+    )
     return result.scalars().all()

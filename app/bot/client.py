@@ -4,9 +4,10 @@ import discord
 from discord.ext import commands
 
 from app.bot.views.lobby import LobbyView
+from app.bot.views.rating import RatingView
 from app.bot.views.result import ResultView
 from app.config.settings import settings
-from app.database.repositories import open_matches
+from app.database.repositories import open_matches, recently_completed
 from app.database.session import session_factory
 from app.log import event
 
@@ -48,10 +49,15 @@ class WarBot(commands.Bot):
         """재시작 전에 열려 있던 내전의 버튼을 다시 살린다."""
         async with session_factory() as session:
             matches = await open_matches(session)
+            finished = await recently_completed(session)
 
         for match in matches:
             self.add_view(LobbyView(match.id))
             self.add_view(ResultView(match.id))
+
+        # 평점은 결과가 확정된 뒤에 붙으므로 끝난 내전에서 되살린다.
+        for match in list(matches) + list(finished):
+            self.add_view(RatingView(match.id))
 
         if matches:
             log.info(

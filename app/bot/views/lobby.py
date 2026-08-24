@@ -12,6 +12,8 @@ from app.database.repositories import (
     last_assigned_roles,
     leave_match,
     save_teams,
+    unwatch_match,
+    watch_match,
 )
 from app.database.session import session_factory
 from app.log import event
@@ -38,6 +40,12 @@ def lobby_embed(match) -> discord.Embed:
         name="참가자",
         value="\n".join(lines) if lines else "아직 참가자가 없습니다.",
     )
+    if match.spectators:
+        embed.add_field(
+            name=f"관전 {len(match.spectators)}명",
+            value=" ".join(f"<@{viewer.discord_id}>" for viewer in match.spectators),
+            inline=False,
+        )
     if count == LOBBY_SIZE:
         embed.set_footer(text="인원이 모두 찼습니다.")
     return embed
@@ -107,6 +115,24 @@ class LobbyView(discord.ui.View):
         self.generate.disabled = len(match.participants) < LOBBY_SIZE
         await interaction.response.edit_message(embed=embed, view=self)
 
+    async def _watch(self, interaction: discord.Interaction, action) -> None:
+        """관전은 Riot 계정 등록을 요구하지 않아 참가와 경로가 다르다."""
+        async with session_factory() as session:
+            status, match = await action(session, self.match_id, interaction.user.id)
+            embed = lobby_embed(match) if match else None
+
+        messages = {
+            "closed": "이미 종료된 내전입니다.",
+            "already": "이미 관전 중입니다.",
+            "playing": "참가 중입니다. 참가를 취소한 뒤 관전해주세요.",
+            "absent": "관전 중이 아닙니다.",
+        }
+        if status in messages:
+            await interaction.response.send_message(messages[status], ephemeral=True)
+            return
+
+        await interaction.response.edit_message(embed=embed, view=self)
+
     @discord.ui.button(label="참가", style=discord.ButtonStyle.success, custom_id="join")
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._update(interaction, join_match)
@@ -114,6 +140,14 @@ class LobbyView(discord.ui.View):
     @discord.ui.button(label="취소", style=discord.ButtonStyle.secondary, custom_id="leave")
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._update(interaction, leave_match)
+
+    @discord.ui.button(label="관전", style=discord.ButtonStyle.secondary, custom_id="watch")
+    async def watch(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._watch(interaction, watch_match)
+
+    @discord.ui.button(label="관전 취소", style=discord.ButtonStyle.secondary, custom_id="unwatch")
+    async def unwatch(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._watch(interaction, unwatch_match)
 
     @discord.ui.button(label="팀 생성", style=discord.ButtonStyle.primary, disabled=True, custom_id="generate")
     async def generate(self, interaction: discord.Interaction, button: discord.ui.Button):

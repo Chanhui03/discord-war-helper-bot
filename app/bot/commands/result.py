@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from app.bot.messages import need_manage_guild
+from app.bot.views.rating import RatingView
 from app.bot.views.result import ResultView, pending_embed, result_embed
 from app.database.repositories import (
     custom_records,
@@ -94,7 +95,7 @@ class Result(commands.Cog):
             game=game.game_id,
             by=interaction.user.id,
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, view=RatingView(saved.id))
 
     async def cog_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError

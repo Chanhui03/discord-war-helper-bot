@@ -3,6 +3,7 @@ import logging
 import discord
 
 from app.bot.messages import need_manage_guild
+from app.bot.views.rating import RatingView
 from app.database.repositories import custom_records, finish_match
 from app.database.session import session_factory
 from app.log import event
@@ -89,7 +90,9 @@ class ResultView(discord.ui.View):
             by=interaction.user.id,
         )
         self.stop()
-        await interaction.response.edit_message(embed=embed, view=None)
+        await interaction.response.edit_message(
+            embed=embed, view=RatingView(self.match_id)
+        )
 
     @discord.ui.button(label="A팀 승리", style=discord.ButtonStyle.success, custom_id="a")
     async def team_a(self, interaction: discord.Interaction, button: discord.ui.Button):

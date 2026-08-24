@@ -31,6 +31,10 @@ class Match(Base):
     participants: Mapped[List["MatchPlayer"]] = relationship(
         lazy="selectin", cascade="all, delete-orphan", order_by="MatchPlayer.id"
     )
+    # 평점은 로비를 그릴 때마다 끌고 올 필요가 없어 관계로 두지 않는다.
+    spectators: Mapped[List["MatchSpectator"]] = relationship(
+        lazy="selectin", cascade="all, delete-orphan", order_by="MatchSpectator.id"
+    )
 
 class MatchPlayer(Base):
     """내전 참가자 스냅샷. 팀/라인은 밸런싱 후에, 성적은 결과 입력 후에 채워진다."""
@@ -56,3 +60,35 @@ class MatchPlayer(Base):
     gold: Mapped[Optional[int]] = mapped_column(Integer)
 
     player: Mapped["Player"] = relationship(lazy="selectin")
+
+class MatchSpectator(Base):
+    """관전자. Riot 계정 등록 없이 참여하므로 Discord 사용자만 남긴다."""
+
+    __tablename__ = "match_spectators"
+    __table_args__ = (
+        UniqueConstraint("match_id", "discord_id", name="uq_match_spectators_user"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    match_id: Mapped[int] = mapped_column(
+        ForeignKey("matches.id", ondelete="CASCADE"), index=True
+    )
+    discord_id: Mapped[int] = mapped_column(BigInteger)
+
+class MatchRating(Base):
+    """참가자가 다른 참가자에게 남긴 평점. MVP 는 이 평균에서 나온다."""
+
+    __tablename__ = "match_ratings"
+    __table_args__ = (
+        UniqueConstraint(
+            "match_id", "rater_id", "target_id", name="uq_match_ratings_rater_target"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    match_id: Mapped[int] = mapped_column(
+        ForeignKey("matches.id", ondelete="CASCADE"), index=True
+    )
+    rater_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
+    target_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
+    score: Mapped[int] = mapped_column(Integer)

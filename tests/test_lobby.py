@@ -13,9 +13,11 @@ def participant(n):
         )
     )
 
-def fake_match(count, match_id=7):
+def fake_match(count, match_id=7, watching=0):
     return SimpleNamespace(
-        id=match_id, participants=[participant(i) for i in range(count)]
+        id=match_id,
+        participants=[participant(i) for i in range(count)],
+        spectators=[SimpleNamespace(discord_id=2000 + i) for i in range(watching)],
     )
 
 def _rendered(players, seed=3, match_id=42):
@@ -27,6 +29,7 @@ def _rendered(players, seed=3, match_id=42):
             SimpleNamespace(player_id=i, player=SimpleNamespace(discord_id=900 + i))
             for i in range(LOBBY_SIZE)
         ],
+        spectators=[],
     )
     return teams_embed(match, result), result
 
@@ -56,9 +59,25 @@ def test_full_lobby_is_marked():
 def test_generate_button_starts_disabled():
     view = LobbyView(1)
     labels = {b.label: b for b in view.children}
-    assert set(labels) == {"참가", "취소", "팀 생성"}
+    assert set(labels) == {"참가", "취소", "관전", "관전 취소", "팀 생성"}
     assert labels["팀 생성"].disabled is True
     assert labels["참가"].disabled is False
+
+def test_lobby_hides_the_spectator_field_when_empty():
+    embed = lobby_embed(fake_match(3))
+    assert [field.name for field in embed.fields] == ["참가자"]
+
+def test_lobby_lists_spectators():
+    embed = lobby_embed(fake_match(3, watching=2))
+    field = embed.fields[1]
+    assert field.name == "관전 2명"
+    assert field.value == "<@2000> <@2001>"
+
+def test_spectators_do_not_count_toward_the_lobby():
+    """관전자가 있어도 10명이 차야 모집이 끝난다."""
+    embed = lobby_embed(fake_match(3, watching=5))
+    assert f"3 / {LOBBY_SIZE}" in embed.description
+    assert embed.footer.text is None
 
 def test_teams_embed_lists_both_teams_in_role_order():
     players = [

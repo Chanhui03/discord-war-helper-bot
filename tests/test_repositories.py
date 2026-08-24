@@ -13,6 +13,13 @@ from app.database.repositories import (
     join_match,
     last_assigned_roles,
     leave_match,
+    match_ratings,
+    mvp_counts,
+    pick_mvp,
+    ratings_by_rater,
+    save_rating,
+    unwatch_match,
+    watch_match,
     save_teams,
     upsert_player,
 )
@@ -394,3 +401,120 @@ class TestCustomStats:
         _, saved = await finish_match_with_records(session, match.id, game_for(match))
 
         assert await custom_stats(session, saved.participants[0].player_id, 99) is None
+
+class TestSpectators:
+    async def test_watching_needs_no_riot_account(self, session):
+        match = await create_match(session, server_id=7)
+        status, updated = await watch_match(session, match.id, discord_id=555)
+
+        assert status == "watching"
+        assert [v.discord_id for v in updated.spectators] == [555]
+        assert updated.participants == []
+
+    async def test_watching_twice_is_rejected(self, session):
+        match = await create_match(session, server_id=7)
+        await watch_match(session, match.id, 555)
+        assert (await watch_match(session, match.id, 555))[0] == "already"
+
+    async def test_unwatch_removes_the_spectator(self, session):
+        match = await create_match(session, server_id=7)
+        await watch_match(session, match.id, 555)
+        status, updated = await unwatch_match(session, match.id, 555)
+
+        assert status == "left"
+        assert updated.spectators == []
+
+    async def test_unwatch_without_watching_is_rejected(self, session):
+        match = await create_match(session, server_id=7)
+        assert (await unwatch_match(session, match.id, 555))[0] == "absent"
+
+    async def test_participants_cannot_also_spectate(self, session):
+        match = await create_match(session, server_id=7)
+        player = await register(session, 4242, "spectate-me")
+        await join_match(session, match.id, player.id)
+
+        assert (await watch_match(session, match.id, 4242))[0] == "playing"
+
+    async def test_joining_moves_a_spectator_into_the_lobby(self, session):
+        match = await create_match(session, server_id=7)
+        player = await register(session, 4243, "switch-me")
+        await watch_match(session, match.id, 4243)
+
+        status, updated = await join_match(session, match.id, player.id)
+        assert status == "joined"
+        assert updated.spectators == []
+        assert len(updated.participants) == 1
+
+    async def test_spectators_do_not_fill_the_lobby(self, session):
+        match = await create_match(session, server_id=7)
+        for i in range(30):
+            await watch_match(session, match.id, 6000 + i)
+
+        player = await register(session, 4244, "still-room")
+        assert (await join_match(session, match.id, player.id))[0] == "joined"
+
+class TestRatings:
+    async def test_rating_is_stored_and_averaged(self, session):
+        match = await named_match(session)
+        await finish_match_with_records(session, match.id, game_for(match))
+        [a, b, c] = [e.player_id for e in match.participants[:3]]
+
+        await save_rating(session, match.id, rater_id=a, target_id=c, score=5)
+        await save_rating(session, match.id, rater_id=b, target_id=c, score=4)
+
+        assert (await match_ratings(session, match.id))[c] == (4.5, 2)
+
+    async def test_rerating_overwrites_instead_of_adding(self, session):
+        match = await named_match(session)
+        [a, b] = [e.player_id for e in match.participants[:2]]
+
+        await save_rating(session, match.id, a, b, 1)
+        await save_rating(session, match.id, a, b, 5)
+
+        assert (await match_ratings(session, match.id))[b] == (5.0, 1)
+
+    async def test_ratings_by_rater_shows_only_my_scores(self, session):
+        match = await named_match(session)
+        [a, b, c] = [e.player_id for e in match.participants[:3]]
+
+        await save_rating(session, match.id, a, b, 3)
+        await save_rating(session, match.id, c, b, 5)
+
+        assert await ratings_by_rater(session, match.id, a) == {b: 3}
+
+    async def test_mvp_is_the_highest_average(self, session):
+        match = await named_match(session)
+        [a, b, c] = [e.player_id for e in match.participants[:3]]
+
+        await save_rating(session, match.id, a, b, 3)
+        await save_rating(session, match.id, a, c, 5)
+
+        assert pick_mvp(await match_ratings(session, match.id)) == c
+
+    async def test_ties_are_broken_by_vote_count(self):
+        assert pick_mvp({1: (4.0, 3), 2: (4.0, 5)}) == 2
+
+    async def test_no_ratings_means_no_mvp(self):
+        assert pick_mvp({}) is None
+
+class TestMvpCounts:
+    async def test_counts_only_completed_matches(self, session):
+        match = await named_match(session)
+        [a, b] = [e.player_id for e in match.participants[:2]]
+        await save_rating(session, match.id, a, b, 5)
+
+        assert await mvp_counts(session, [a, b], 5) == {a: 0, b: 0}
+
+        await finish_match_with_records(session, match.id, game_for(match))
+        assert await mvp_counts(session, [a, b], 5) == {a: 0, b: 1}
+
+    async def test_scoped_to_one_server(self, session):
+        match = await named_match(session)
+        [a, b] = [e.player_id for e in match.participants[:2]]
+        await save_rating(session, match.id, a, b, 5)
+        await finish_match_with_records(session, match.id, game_for(match))
+
+        assert await mvp_counts(session, [a, b], 99) == {a: 0, b: 0}
+
+    async def test_empty_player_list(self, session):
+        assert await mvp_counts(session, [], 5) == {}

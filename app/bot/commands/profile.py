@@ -3,7 +3,12 @@ from discord import app_commands
 from discord.ext import commands
 
 from app.bot.messages import NEED_REGISTER
-from app.database.repositories import custom_records, custom_stats, get_player
+from app.database.repositories import (
+    custom_records,
+    custom_stats,
+    get_player,
+    mvp_counts,
+)
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
 from app.services.stats import player_score
@@ -26,6 +31,11 @@ class Profile(commands.Cog):
                 await custom_stats(session, player.id, interaction.guild_id)
                 if player
                 else None
+            )
+            mvps = (
+                await mvp_counts(session, [player.id], interaction.guild_id)
+                if player
+                else {}
             )
 
         if player is None:
@@ -80,6 +90,8 @@ class Profile(commands.Cog):
                 f"\nKDA {custom_kda:.2f} · CS {avg_cs:.0f} · 딜 {avg_damage:,.0f}"
                 f"\n-# {games}경기 전적 파일 기준"
             )
+        if mvps.get(player.id):
+            custom += f"\n🏆 MVP {mvps[player.id]}회"
         embed.add_field(name="내전 전적", value=custom)
         embed.add_field(
             name="선호 라인",
