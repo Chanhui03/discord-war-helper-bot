@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 EXTENSIONS = [
     "app.bot.commands.ping",
     "app.bot.commands.register",
+    "app.bot.commands.alias",
     "app.bot.commands.profile",
     "app.bot.commands.customs",
     "app.bot.commands.roles",

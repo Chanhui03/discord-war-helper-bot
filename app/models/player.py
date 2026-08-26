@@ -45,6 +45,23 @@ class Player(Base):
         lazy="selectin", cascade="all, delete-orphan"
     )
 
+class PlayerAlias(Base):
+    """부계정 Riot ID. 전적 파일에서 참가자를 알아보는 데만 쓴다.
+
+    솔랭 지표는 본계정에서만 받아온다. riot_id 는 대소문자를 무시한 비교용 키이고,
+    남의 계정을 자기 부계정으로 등록하지 못하도록 전체에서 유일해야 한다.
+    """
+
+    __tablename__ = "player_aliases"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(
+        ForeignKey("players.id", ondelete="CASCADE"), index=True
+    )
+    riot_id: Mapped[str] = mapped_column(String(48), unique=True)
+    riot_game_name: Mapped[str] = mapped_column(String(32))
+    riot_tagline: Mapped[str] = mapped_column(String(8))
+
 class PlayerTrait(Base):
     """오더능력·챔피언폭 같은 주관 지표. 여러 명이 매긴 평균을 쓴다.
 

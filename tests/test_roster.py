@@ -11,6 +11,7 @@ NOW = datetime(2026, 8, 26, 21, 30)
 def player(n, days_ago=None):
     """days_ago 가 None 이면 아직 전적을 받지 않은 등록자."""
     return SimpleNamespace(
+        id=n,
         discord_id=1000 + n,
         riot_game_name=f"플레이어{n}",
         riot_tagline="KR1",
@@ -57,3 +58,10 @@ async def test_all_players_returns_everyone_registered(session):
         )
 
     assert {p.discord_id for p in await all_players(session)} == {0, 1, 2}
+
+def test_alias_count_is_shown_next_to_the_main_account():
+    embed = roster_embed([player(0, days_ago=1), player(1, days_ago=2)], {0: ["a", "b"]})
+    lines = embed.description.split("\n")
+
+    assert "(+부계정 2)" in lines[0]
+    assert "부계정" not in lines[1]

@@ -59,7 +59,8 @@ def ten_players(game_id=1, created_at=1000):
     )
 
 def keys(count=10):
-    return [riot_id_key(f"플레이어{i}", "KR1") for i in range(count)]
+    """참가자마다 인정할 Riot ID 묶음(본계정 하나씩)."""
+    return [[riot_id_key(f"플레이어{i}", "KR1")] for i in range(count)]
 
 def test_riot_id_key_ignores_case_and_padding():
     assert riot_id_key(" 겨 울 ", "Chani") == riot_id_key("겨 울", "chani")
@@ -154,3 +155,10 @@ def test_game_duration_is_kept():
 def test_position_comes_from_the_timeline(lane, role, expected):
     _, record = one_record(lane=lane, role=role)
     assert record.position == expected
+
+def test_a_player_can_be_found_by_their_alias():
+    """부계정으로 뛰었어도 같은 사람으로 본다."""
+    payload = [game([participant(1, "부계정", "KR2", 100, True)])]
+    groups = [[riot_id_key("본계정", "KR1"), riot_id_key("부계정", "KR2")]]
+
+    assert find_game(json.dumps(payload), groups).game_id == 1

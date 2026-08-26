@@ -119,9 +119,15 @@ def load_games(payload: Any) -> List[GameRecord]:
     ]
     return sorted(records, key=lambda record: record.created_at, reverse=True)
 
-def find_game(raw: str, riot_ids: Sequence[str]) -> GameRecord:
+def matched(game: GameRecord, id_groups: Sequence[Sequence[str]]) -> List[bool]:
+    """참가자별로 그 경기에서 찾았는지. 한 사람이 부계정을 여러 개 가질 수 있다."""
+    found = set(game.by_riot_id())
+    return [bool(found & set(group)) for group in id_groups]
+
+def find_game(raw: str, id_groups: Sequence[Sequence[str]]) -> GameRecord:
     """참가자 전원이 들어 있는 가장 최근 경기를 고른다.
 
+    id_groups 는 참가자마다 인정할 Riot ID 키 목록(본계정 + 부계정)이다.
     전원이 있는 경기가 없으면 MAX_UNMATCHED 명까지 빠진 경기를 대신 고른다.
     못 맞춘 사람은 개인 성적 없이 승패만 남는다.
     """
@@ -134,22 +140,23 @@ def find_game(raw: str, riot_ids: Sequence[str]) -> GameRecord:
     if not games:
         raise ReplayError("기록할 수 있는 경기가 없습니다. 중단된 경기만 들어 있습니다.")
 
-    wanted = set(riot_ids)
     for game in games:
-        if wanted <= set(game.by_riot_id()):
+        if all(matched(game, id_groups)):
             return game
 
     # 전원이 있는 경기가 없으면 조건을 낮춰 다시 본다.
-    enough = max(len(wanted) - MAX_UNMATCHED, 1)
+    enough = max(len(id_groups) - MAX_UNMATCHED, 1)
     for game in games:
-        if len(wanted & set(game.by_riot_id())) >= enough:
+        if sum(matched(game, id_groups)) >= enough:
             return game
 
     # 가장 많이 겹치는 경기를 근거로 누가 빠졌는지 알려준다.
-    closest = max(games, key=lambda game: len(wanted & set(game.by_riot_id())))
-    missing = sorted(wanted - set(closest.by_riot_id()))
+    closest = max(games, key=lambda game: sum(matched(game, id_groups)))
+    missing = sorted(
+        group[0] for group, ok in zip(id_groups, matched(closest, id_groups)) if not ok
+    )
     raise ReplayError(
         "참가자가 일치하는 경기를 찾지 못했습니다. "
-        f"{len(wanted)}명 중 {enough}명 이상 맞아야 합니다. "
+        f"{len(id_groups)}명 중 {enough}명 이상 맞아야 합니다. "
         f"맞출 수 없는 사람: {', '.join(missing)}"
     )

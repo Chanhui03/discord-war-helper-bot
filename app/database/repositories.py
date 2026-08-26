@@ -4,7 +4,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.match import Match, MatchPlayer, MatchRating, MatchSpectator
-from app.models.player import Player, PlayerTrait
+from app.models.player import Player, PlayerAlias, PlayerTrait
 from app.services.matchmaking import LOBBY_SIZE
 from app.services.replay import GameRecord, riot_id_key
 
@@ -69,6 +69,79 @@ async def set_role_preference(
     player = await get_player(session, discord_id, game)
     setattr(player, field, role)
     await session.commit()
+
+async def _riot_id_owner(session: AsyncSession, riot_id: str) -> Optional[int]:
+    """그 Riot ID 를 이미 쓰고 있는 플레이어. 본계정과 부계정을 모두 본다."""
+    for player in await all_players(session):
+        if riot_id_key(player.riot_game_name, player.riot_tagline) == riot_id:
+            return player.id
+
+    result = await session.execute(
+        select(PlayerAlias.player_id).where(PlayerAlias.riot_id == riot_id)
+    )
+    return result.scalar_one_or_none()
+
+async def add_alias(
+    session: AsyncSession, player_id: int, game_name: str, tagline: str
+) -> str:
+    """부계정 Riot ID 를 등록한다.
+
+    남의 성적을 가로챌 수 없도록, 이미 누가 쓰고 있는 ID 는 받지 않는다.
+    """
+    riot_id = riot_id_key(game_name, tagline)
+    owner = await _riot_id_owner(session, riot_id)
+    if owner is not None:
+        return "mine" if owner == player_id else "taken"
+
+    session.add(
+        PlayerAlias(
+            player_id=player_id,
+            riot_id=riot_id,
+            riot_game_name=game_name,
+            riot_tagline=tagline,
+        )
+    )
+    await session.commit()
+    return "added"
+
+async def remove_alias(session: AsyncSession, player_id: int, alias_id: int) -> bool:
+    """본인 것만 지운다."""
+    alias = await session.get(PlayerAlias, alias_id)
+    if alias is None or alias.player_id != player_id:
+        return False
+
+    await session.delete(alias)
+    await session.commit()
+    return True
+
+async def aliases_for(
+    session: AsyncSession, player_ids: Sequence[int]
+) -> Dict[int, list]:
+    """플레이어별 부계정 목록."""
+    if not player_ids:
+        return {}
+
+    result = await session.execute(
+        select(PlayerAlias)
+        .where(PlayerAlias.player_id.in_(player_ids))
+        .order_by(PlayerAlias.id)
+    )
+    grouped: Dict[int, list] = {}
+    for alias in result.scalars():
+        grouped.setdefault(alias.player_id, []).append(alias)
+    return grouped
+
+async def match_riot_ids(session: AsyncSession, match: Match) -> Dict[int, list]:
+    """참가자별로 인정할 Riot ID 키 목록. 본계정이 앞에 온다."""
+    player_ids = [entry.player_id for entry in match.participants]
+    aliases = await aliases_for(session, player_ids)
+    return {
+        entry.player_id: [
+            riot_id_key(entry.player.riot_game_name, entry.player.riot_tagline),
+            *(alias.riot_id for alias in aliases.get(entry.player_id, ())),
+        ]
+        for entry in match.participants
+    }
 
 async def save_trait(
     session: AsyncSession,
@@ -395,11 +468,12 @@ async def finish_match_with_records(
         return "closed", None
 
     records = game.by_riot_id()
+    keys = await match_riot_ids(session, match)
     paired = [
         (
             entry,
-            records.get(
-                riot_id_key(entry.player.riot_game_name, entry.player.riot_tagline)
+            next(
+                (records[key] for key in keys[entry.player_id] if key in records), None
             ),
         )
         for entry in match.participants

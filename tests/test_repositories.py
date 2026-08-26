@@ -4,6 +4,8 @@ from dataclasses import replace
 import pytest
 
 from app.database.repositories import (
+    add_alias,
+    aliases_for,
     create_match,
     custom_position_stats,
     custom_records,
@@ -21,6 +23,7 @@ from app.database.repositories import (
     mvp_counts,
     pick_mvp,
     ratings_by_rater,
+    remove_alias,
     save_rating,
     save_trait,
     swap_team_slots,
@@ -563,6 +566,65 @@ class TestPositionStats:
         saved = await self.recorded(session)
         player_id = saved.participants[0].player_id
         assert await custom_position_stats(session, player_id, 99) == []
+
+class TestAliases:
+    """부계정: 전적 파일에서 사람을 알아보는 데만 쓴다."""
+
+    async def test_alias_is_stored_and_listed(self, session):
+        player = await register(session, 1, "p-1", name="본계정")
+        assert await add_alias(session, player.id, "부계정", "KR2") == "added"
+
+        [alias] = (await aliases_for(session, [player.id]))[player.id]
+        assert (alias.riot_game_name, alias.riot_tagline) == ("부계정", "KR2")
+
+    async def test_someone_elses_main_cannot_be_claimed(self, session):
+        mine = await register(session, 1, "p-1", name="내계정")
+        await register(session, 2, "p-2", name="남의계정")
+
+        assert await add_alias(session, mine.id, "남의계정", "KR1") == "taken"
+        assert await aliases_for(session, [mine.id]) == {}
+
+    async def test_the_same_alias_cannot_be_registered_twice(self, session):
+        first = await register(session, 1, "p-1", name="첫번째")
+        second = await register(session, 2, "p-2", name="두번째")
+        await add_alias(session, first.id, "공용", "KR2")
+
+        assert await add_alias(session, first.id, "공용", "KR2") == "mine"
+        assert await add_alias(session, second.id, "공용", "KR2") == "taken"
+
+    async def test_only_the_owner_can_remove_it(self, session):
+        owner = await register(session, 1, "p-1", name="주인")
+        other = await register(session, 2, "p-2", name="남")
+        await add_alias(session, owner.id, "부계정", "KR2")
+        [alias] = (await aliases_for(session, [owner.id]))[owner.id]
+
+        assert await remove_alias(session, other.id, alias.id) is False
+        assert await remove_alias(session, owner.id, alias.id) is True
+        assert await aliases_for(session, [owner.id]) == {}
+
+    async def test_records_are_matched_through_the_alias(self, session):
+        match = await named_match(session)
+        entry = match.participants[0]
+        await add_alias(session, entry.player_id, "부계정", "KR2")
+
+        # 그 사람만 부계정 이름으로 들어 있는 파일.
+        record = game_for(match)
+        renamed = replace(
+            record,
+            participants=tuple(
+                replace(one, riot_id=riot_id_key("부계정", "KR2"))
+                if index == 0
+                else one
+                for index, one in enumerate(record.participants)
+            ),
+        )
+
+        status, saved = await finish_match_with_records(session, match.id, renamed)
+        by_id = {row.player_id: row for row in saved.participants}
+
+        assert status == "A"
+        assert by_id[entry.player_id].kills == 0
+        assert all(row.kills is not None for row in saved.participants)
 
 class TestTraits:
     async def test_average_and_vote_count(self, session):

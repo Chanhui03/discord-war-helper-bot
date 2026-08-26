@@ -11,10 +11,11 @@ from app.database.repositories import (
     custom_records,
     finish_match_with_records,
     get_open_match,
+    match_riot_ids,
 )
 from app.database.session import session_factory
 from app.log import event
-from app.services.replay import ReplayError, find_game, riot_id_key
+from app.services.replay import ReplayError, find_game, matched
 
 log = logging.getLogger(__name__)
 
@@ -58,12 +59,11 @@ class Result(commands.Cog):
                 return
 
             await interaction.response.defer()
-            riot_ids = [
-                riot_id_key(entry.player.riot_game_name, entry.player.riot_tagline)
-                for entry in match.participants
-            ]
+            # 본계정으로 등록했어도 부계정으로 뛴 사람이 있다.
+            keys = await match_riot_ids(session, match)
+            id_groups = [keys[entry.player_id] for entry in match.participants]
             try:
-                game = find_game((await replay.read()).decode("utf-8"), riot_ids)
+                game = find_game((await replay.read()).decode("utf-8"), id_groups)
             except (ReplayError, UnicodeDecodeError) as error:
                 await interaction.followup.send(str(error), ephemeral=True)
                 return
@@ -84,12 +84,10 @@ class Result(commands.Cog):
                 saved.discord_server_id,
             )
             # 파일에 없던 참가자는 승패만 들어갔다. 그대로 알려준다.
-            found = set(game.by_riot_id())
             missing = [
                 entry
-                for entry in saved.participants
-                if riot_id_key(entry.player.riot_game_name, entry.player.riot_tagline)
-                not in found
+                for entry, ok in zip(saved.participants, matched(game, id_groups))
+                if not ok
             ]
             embed = result_embed(saved, status, records, missing)
 
