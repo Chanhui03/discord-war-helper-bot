@@ -27,13 +27,17 @@ def describe(main_role, secondary_role, avoid_role) -> str:
 
 class RoleSelect(discord.ui.Select):
     def __init__(self, field: str, title: str, current: Optional[str]) -> None:
+        # 고르고 나면 placeholder 가 사라져 세 박스가 모두 같아 보인다. 라벨에
+        # 항목 이름을 붙여 접힌 상태에서도 무슨 라인을 고르는 칸인지 알게 한다.
         options = [
             discord.SelectOption(
-                label="없음", value=NO_ROLE, default=current is None
+                label=f"{title} · 없음", value=NO_ROLE, default=current is None
             )
         ] + [
             discord.SelectOption(
-                label=ROLE_LABELS[role], value=role, default=role == current
+                label=f"{title} · {ROLE_LABELS[role]}",
+                value=role,
+                default=role == current,
             )
             for role in ROLES
         ]
