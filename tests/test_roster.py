@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.bot.commands.roster import LIST_LIMIT, roster_embed
+from app.bot.commands.roster import roster_embed
+from app.bot.messages import LIST_LIMIT
 from app.database.repositories import all_players, upsert_player
 
 NOW = datetime(2026, 8, 26, 21, 30)

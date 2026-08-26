@@ -95,15 +95,12 @@ class Alias(commands.Cog):
     async def remove(self, interaction: discord.Interaction) -> None:
         async with session_factory() as session:
             player = await get_player(session, interaction.user.id)
-            aliases = (
-                (await aliases_for(session, [player.id])).get(player.id, [])
-                if player
-                else []
-            )
+            if player is None:
+                await interaction.response.send_message(NEED_REGISTER, ephemeral=True)
+                return
 
-        if player is None:
-            await interaction.response.send_message(NEED_REGISTER, ephemeral=True)
-            return
+            aliases = (await aliases_for(session, [player.id])).get(player.id, [])
+
         if not aliases:
             await interaction.response.send_message(alias_lines([]), ephemeral=True)
             return

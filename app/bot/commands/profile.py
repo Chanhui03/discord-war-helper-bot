@@ -33,25 +33,13 @@ class Profile(commands.Cog):
     async def profile(self, interaction: discord.Interaction) -> None:
         async with session_factory() as session:
             player = await get_player(session, interaction.user.id)
-            records = (
-                await custom_records(session, [player.id], interaction.guild_id)
-                if player
-                else {}
-            )
-            recorded = (
-                await custom_stats(session, player.id, interaction.guild_id)
-                if player
-                else None
-            )
-            mvps = (
-                await mvp_counts(session, [player.id], interaction.guild_id)
-                if player
-                else {}
-            )
+            if player is None:
+                await interaction.response.send_message(NEED_REGISTER, ephemeral=True)
+                return
 
-        if player is None:
-            await interaction.response.send_message(NEED_REGISTER, ephemeral=True)
-            return
+            records = await custom_records(session, [player.id], interaction.guild_id)
+            recorded = await custom_stats(session, player.id, interaction.guild_id)
+            mvps = await mvp_counts(session, [player.id], interaction.guild_id)
 
         stats = player.stats
         if stats is None:

@@ -2,7 +2,8 @@ import random
 
 import pytest
 
-from app.bot.commands.ability import LIST_LIMIT, status_embed
+from app.bot.commands.ability import status_embed
+from app.bot.messages import LIST_LIMIT
 from app.bot.commands.customs import trait_field
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams, top_shotcallers
 from app.services.scoring import TRAIT_FADE_GAMES, TRAIT_MIN_VOTES, trait_score

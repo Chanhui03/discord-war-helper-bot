@@ -16,6 +16,11 @@ def _finished_in(server_id: int):
     """집계는 모두 '그 서버에서 끝난 내전'만 본다."""
     return Match.completed.is_(True), Match.discord_server_id == server_id
 
+
+def _count_true(column):
+    """True 인 행만 센다. SQLite 에는 boolean 합계가 없어 case 로 편다."""
+    return func.sum(case((column.is_(True), 1), else_=0))
+
 async def upsert_player(
     session: AsyncSession,
     *,
@@ -358,7 +363,7 @@ async def custom_records(
     if not player_ids:
         return {}
 
-    wins = func.sum(case((MatchPlayer.win.is_(True), 1), else_=0))
+    wins = _count_true(MatchPlayer.win)
     result = await session.execute(
         select(MatchPlayer.player_id, func.count().label("games"), wins.label("wins"))
         .join(Match, Match.id == MatchPlayer.match_id)
@@ -414,16 +419,12 @@ async def custom_position_stats(
         select(
             position,
             func.count().label("games"),
-            func.sum(case((MatchPlayer.win.is_(True), 1), else_=0)).label("wins"),
+            _count_true(MatchPlayer.win).label("wins"),
             func.sum(MatchPlayer.kills).label("kills"),
             func.sum(MatchPlayer.deaths).label("deaths"),
             func.sum(MatchPlayer.assists).label("assists"),
-            func.sum(case((MatchPlayer.first_blood.is_(True), 1), else_=0)).label(
-                "first_blood"
-            ),
-            func.sum(case((MatchPlayer.first_tower.is_(True), 1), else_=0)).label(
-                "first_tower"
-            ),
+            _count_true(MatchPlayer.first_blood).label("first_blood"),
+            _count_true(MatchPlayer.first_tower).label("first_tower"),
             func.sum(MatchPlayer.damage).label("damage"),
             func.sum(MatchPlayer.damage_taken).label("damage_taken"),
             func.sum(MatchPlayer.gold).label("gold"),
@@ -537,7 +538,7 @@ async def last_assigned_roles(
         return {}
 
     statement = (
-        select(MatchPlayer.player_id, MatchPlayer.role, Match.id)
+        select(MatchPlayer.player_id, MatchPlayer.role)
         .join(Match, Match.id == MatchPlayer.match_id)
         .where(
             Match.discord_server_id == server_id,
@@ -550,7 +551,7 @@ async def last_assigned_roles(
         statement = statement.where(Match.id != exclude_match_id)
 
     latest: Dict[int, str] = {}
-    for player_id, role, _ in await session.execute(statement):
+    for player_id, role in await session.execute(statement):
         latest.setdefault(player_id, role)
     return latest
 
@@ -630,7 +631,12 @@ async def mvp_counts(
         return {}
 
     result = await session.execute(
-        select(MatchRating.match_id, MatchRating.target_id, func.avg(MatchRating.score), func.count())
+        select(
+            MatchRating.match_id,
+            MatchRating.target_id,
+            func.avg(MatchRating.score),
+            func.count(),
+        )
         .join(Match, Match.id == MatchRating.match_id)
         .where(*_finished_in(server_id))
         .group_by(MatchRating.match_id, MatchRating.target_id)

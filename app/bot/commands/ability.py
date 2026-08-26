@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.bot.messages import numbered
 from app.database.repositories import (
     all_players,
     get_player,
@@ -11,9 +12,6 @@ from app.database.repositories import (
 from app.database.session import session_factory
 from app.traits import CHAMPS, SHOTCALL, summary
 
-# 임베드 설명 길이 제한에 걸리지 않도록 한 번에 보여줄 인원을 제한한다.
-LIST_LIMIT = 40
-
 def status_embed(players, scores) -> discord.Embed:
     """평가가 적게 쌓인 사람부터 나열한다. 아직 아무도 안 매긴 사람이 맨 위로 온다."""
 
@@ -21,16 +19,13 @@ def status_embed(players, scores) -> discord.Embed:
         return sum(count for _, count in scores.get(player.id, {}).values())
 
     ordered = sorted(players, key=lambda player: (votes(player), player.riot_game_name))
-    lines = [
-        f"{index}. <@{player.discord_id}> — {summary(scores.get(player.id, {}))}"
-        for index, player in enumerate(ordered[:LIST_LIMIT], 1)
-    ]
-    if len(ordered) > LIST_LIMIT:
-        lines.append(f"-# 외 {len(ordered) - LIST_LIMIT}명")
+
+    def line(player) -> str:
+        return f"<@{player.discord_id}> — {summary(scores.get(player.id, {}))}"
 
     return discord.Embed(
         title=f"능력평가 현황 {len(ordered)}명",
-        description="\n".join(lines) if lines else "아직 등록한 사람이 없습니다.",
+        description=numbered(ordered, line) or "아직 등록한 사람이 없습니다.",
         colour=discord.Colour.blurple(),
     )
 
