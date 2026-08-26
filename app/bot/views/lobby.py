@@ -6,6 +6,7 @@ import discord
 from app.bot.messages import NEED_REGISTER, need_manage_guild
 from app.database.repositories import (
     custom_records,
+    delete_match,
     get_match,
     get_player,
     join_match,
@@ -201,3 +202,22 @@ class LobbyView(discord.ui.View):
         )
         self.stop()
         await interaction.edit_original_response(embed=embed, view=None)
+
+    @discord.ui.button(label="삭제", style=discord.ButtonStyle.danger, custom_id="delete")
+    async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.manage_guild:
+            await interaction.response.send_message(need_manage_guild("내전 삭제"), ephemeral=True)
+            return
+
+        async with session_factory() as session:
+            deleted = await delete_match(session, self.match_id)
+
+        if not deleted:
+            await interaction.response.send_message("이미 삭제된 내전입니다.", ephemeral=True)
+            return
+
+        event(log, "match_deleted", match=self.match_id, by=interaction.user.id)
+        self.stop()
+        await interaction.response.edit_message(
+            content=f"내전 #{self.match_id} 모집이 삭제되었습니다.", embed=None, view=None
+        )

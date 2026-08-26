@@ -59,9 +59,14 @@ def test_full_lobby_is_marked():
 def test_generate_button_starts_disabled():
     view = LobbyView(1)
     labels = {b.label: b for b in view.children}
-    assert set(labels) == {"참가", "취소", "관전", "관전 취소", "팀 생성"}
+    assert set(labels) == {"참가", "취소", "관전", "관전 취소", "팀 생성", "삭제"}
     assert labels["팀 생성"].disabled is True
     assert labels["참가"].disabled is False
+
+def test_delete_button_sits_on_its_own_row():
+    """실수로 누르지 않도록 다른 버튼과 같은 줄에 두지 않는다."""
+    rows = LobbyView(1).to_components()
+    assert [item["label"] for item in rows[-1]["components"]] == ["삭제"]
 
 def test_lobby_hides_the_spectator_field_when_empty():
     embed = lobby_embed(fake_match(3))

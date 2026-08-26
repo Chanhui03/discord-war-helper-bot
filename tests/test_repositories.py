@@ -6,9 +6,11 @@ from app.database.repositories import (
     create_match,
     custom_records,
     custom_stats,
+    delete_match,
     finish_match,
     finish_match_with_records,
     get_match,
+    get_open_match,
     get_player,
     join_match,
     last_assigned_roles,
@@ -154,6 +156,21 @@ class TestLobby:
         assert status == "left"
         assert len(updated.participants) == LOBBY_SIZE - 1
         assert (await leave_match(session, match.id, players[0].id))[0] == "absent"
+
+    async def test_delete_match_removes_participants_and_spectators(self, session):
+        match = await create_match(session, server_id=1)
+        player = await register(session, 1, "p-1")
+        await join_match(session, match.id, player.id)
+        await watch_match(session, match.id, discord_id=555)
+
+        assert await delete_match(session, match.id) is True
+        assert await get_match(session, match.id) is None
+        assert await get_open_match(session, 1) is None
+
+    async def test_deleting_twice_is_rejected(self, session):
+        match = await create_match(session, server_id=1)
+        assert await delete_match(session, match.id) is True
+        assert await delete_match(session, match.id) is False
 
     async def test_save_teams_writes_every_assignment(self, session):
         match = await create_match(session, server_id=1)

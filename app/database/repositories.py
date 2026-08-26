@@ -80,6 +80,16 @@ async def get_match(session: AsyncSession, match_id: int) -> Optional[Match]:
     result = await session.execute(select(Match).where(Match.id == match_id))
     return result.scalar_one_or_none()
 
+async def delete_match(session: AsyncSession, match_id: int) -> bool:
+    """내전을 참가자·관전자와 함께 지운다."""
+    match = await get_match(session, match_id)
+    if match is None:
+        return False
+
+    await session.delete(match)
+    await session.commit()
+    return True
+
 async def _commit_and_reload(
     session: AsyncSession, match: Match
 ) -> Optional[Match]:
