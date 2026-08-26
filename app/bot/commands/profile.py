@@ -45,7 +45,7 @@ class Profile(commands.Cog):
         stats = player.stats
         if stats is None:
             await interaction.response.send_message(
-                "아직 수집된 전적이 없습니다. `/등록`을 다시 실행해주세요.", ephemeral=True
+                "아직 수집된 전적이 없습니다. `/전적갱신`을 실행해주세요.", ephemeral=True
             )
             return
 

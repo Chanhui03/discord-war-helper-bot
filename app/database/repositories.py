@@ -49,6 +49,11 @@ async def get_player(
     )
     return result.scalar_one_or_none()
 
+async def all_players(session: AsyncSession, game: str = "lol") -> Sequence[Player]:
+    """등록된 플레이어 전부. 서버별로 나누지 않고 봇 전체 기준이다."""
+    result = await session.execute(select(Player).where(Player.game == game))
+    return result.scalars().all()
+
 async def set_role_preference(
     session: AsyncSession,
     discord_id: int,

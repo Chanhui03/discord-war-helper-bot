@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy.exc import IntegrityError
 
+from app.bot.messages import NEED_REGISTER
 from app.database.repositories import get_player, upsert_player
 from app.database.session import session_factory
 from app.services.riot.client import RiotClient
@@ -14,7 +15,7 @@ class Register(commands.Cog):
         self.bot = bot
         self.riot = RiotClient()
 
-    @app_commands.command(name="등록", description="Riot 계정을 등록합니다.")
+    @app_commands.command(name="전적등록", description="Riot 계정을 등록하고 전적을 받아옵니다.")
     @app_commands.describe(riot_id="게임이름#태그")
     async def register(self, interaction: discord.Interaction, riot_id: str) -> None:
         game_name, _, tagline = riot_id.partition("#")
@@ -61,10 +62,35 @@ class Register(commands.Cog):
                 )
                 note = "" if refreshed else "\n최근에 갱신해서 전적 조회는 생략했습니다."
             except RiotAPIError as error:
-                note = f"\n전적 수집 실패: {error} — `/등록`으로 다시 시도해주세요."
+                note = f"\n전적 수집 실패: {error} — `/전적갱신`으로 다시 시도해주세요."
 
         await interaction.followup.send(
             f"등록 완료: **{player.riot_game_name}#{player.riot_tagline}**{note}",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="전적갱신", description="등록한 계정의 전적을 다시 받아옵니다.")
+    async def refresh(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+
+        async with session_factory() as session:
+            player = await get_player(session, interaction.user.id)
+            if player is None:
+                await interaction.followup.send(NEED_REGISTER, ephemeral=True)
+                return
+
+            try:
+                # 직접 부른 갱신이므로 TTL 을 무시하고 항상 다시 받아온다.
+                await refresh_player_stats(session, self.riot, player, force=True)
+            except RiotAPIError as error:
+                await interaction.followup.send(
+                    f"전적 수집 실패: {error}", ephemeral=True
+                )
+                return
+
+        await interaction.followup.send(
+            f"**{player.riot_game_name}#{player.riot_tagline}** 전적을 갱신했습니다."
+            "\n`/전적`으로 확인해주세요.",
             ephemeral=True,
         )
 
