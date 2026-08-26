@@ -1,8 +1,12 @@
+from pathlib import Path
+from typing import Optional
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from app.bot.messages import NEED_REGISTER
+from app.config.settings import ROOT
 from app.database.repositories import (
     custom_records,
     custom_stats,
@@ -12,6 +16,13 @@ from app.database.repositories import (
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
 from app.services.stats import player_score
+
+RANK_ICONS = ROOT / "assets" / "ranks"
+
+def rank_icon(tier: Optional[str]) -> Path:
+    """티어 엠블럼 파일. 모르는 티어나 언랭이면 Unranked 엠블럼."""
+    emblem = RANK_ICONS / f"{(tier or 'unranked').lower()}.png"
+    return emblem if emblem.exists() else RANK_ICONS / "unranked.png"
 
 class Profile(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
@@ -114,7 +125,13 @@ class Profile(commands.Cog):
             embed.add_field(name="라인별 지표", value="\n".join(lines), inline=False)
 
         embed.set_footer(text=f"갱신 {stats.updated_at:%Y-%m-%d %H:%M}")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        # 엠블럼은 봇이 들고 있는 파일을 그때그때 붙인다(외부 링크에 기대지 않는다).
+        emblem = rank_icon(stats.tier)
+        embed.set_thumbnail(url=f"attachment://{emblem.name}")
+        await interaction.response.send_message(
+            embed=embed, file=discord.File(emblem), ephemeral=True
+        )
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Profile(bot))
