@@ -205,10 +205,6 @@ class LobbyView(discord.ui.View):
 
     @discord.ui.button(label="삭제", style=discord.ButtonStyle.danger, custom_id="delete")
     async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(need_manage_guild("내전 삭제"), ephemeral=True)
-            return
-
         async with session_factory() as session:
             deleted = await delete_match(session, self.match_id)
 
