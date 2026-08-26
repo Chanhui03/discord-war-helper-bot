@@ -10,16 +10,16 @@ def test_every_option_says_which_line_it_sets():
     main = selects(view)["main_role"]
 
     assert [option.label for option in main.options] == [
-        "주라인 · 없음",
-        "주라인 · 탑",
-        "주라인 · 정글",
-        "주라인 · 미드",
-        "주라인 · 원딜",
-        "주라인 · 서폿",
+        "선호라인 1순위 · 없음",
+        "선호라인 1순위 · 탑",
+        "선호라인 1순위 · 정글",
+        "선호라인 1순위 · 미드",
+        "선호라인 1순위 · 원딜",
+        "선호라인 1순위 · 서폿",
     ]
     assert [option.label for option in selects(view)["avoid_role"].options][:2] == [
-        "기피 라인 · 없음",
-        "기피 라인 · 탑",
+        "기피라인 · 없음",
+        "기피라인 · 탑",
     ]
 
 

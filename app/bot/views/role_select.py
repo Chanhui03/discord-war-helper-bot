@@ -9,9 +9,9 @@ from app.roles import ROLE_LABELS, ROLES
 NO_ROLE = "NONE"
 
 FIELDS = (
-    ("main_role", "주라인"),
-    ("secondary_role", "부라인"),
-    ("avoid_role", "기피 라인"),
+    ("main_role", "선호라인 1순위"),
+    ("secondary_role", "선호라인 2순위"),
+    ("avoid_role", "기피라인"),
 )
 
 def label_of(role: Optional[str]) -> str:
@@ -19,10 +19,10 @@ def label_of(role: Optional[str]) -> str:
 
 def describe(main_role, secondary_role, avoid_role) -> str:
     return (
-        f"주라인 **{label_of(main_role)}** / "
-        f"부라인 **{label_of(secondary_role)}** / "
+        f"선호 1순위 **{label_of(main_role)}** / "
+        f"선호 2순위 **{label_of(secondary_role)}** / "
         f"기피 **{label_of(avoid_role)}**\n"
-        "-# 기피 라인을 간 다음 내전에서는 그 라인에 배정되지 않습니다."
+        "-# 기피라인을 간 다음 내전에서는 그 라인에 배정되지 않습니다."
     )
 
 class RoleSelect(discord.ui.Select):
@@ -56,7 +56,7 @@ class RoleSelect(discord.ui.Select):
         chosen = [value for value in planned.values() if value is not None]
         if len(chosen) != len(set(chosen)):
             await interaction.response.send_message(
-                "주라인 / 부라인 / 기피 라인은 서로 다르게 선택해주세요.", ephemeral=True
+                "선호라인 1순위 / 2순위 / 기피라인은 서로 다르게 선택해주세요.", ephemeral=True
             )
             return
 

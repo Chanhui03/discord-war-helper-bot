@@ -11,7 +11,7 @@ class Roles(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="라인설정", description="주라인과 부라인을 설정합니다.")
+    @app_commands.command(name="라인설정", description="선호라인과 기피라인을 설정합니다.")
     async def set_roles(self, interaction: discord.Interaction) -> None:
         async with session_factory() as session:
             player = await get_player(session, interaction.user.id)

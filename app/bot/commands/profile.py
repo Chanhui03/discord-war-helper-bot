@@ -96,8 +96,8 @@ class Profile(commands.Cog):
         embed.add_field(
             name="선호 라인",
             value=(
-                f"주 {ROLE_LABELS.get(player.main_role, '미설정')} / "
-                f"부 {ROLE_LABELS.get(player.secondary_role, '미설정')} / "
+                f"1순위 {ROLE_LABELS.get(player.main_role, '미설정')} / "
+                f"2순위 {ROLE_LABELS.get(player.secondary_role, '미설정')} / "
                 f"기피 {ROLE_LABELS.get(player.avoid_role, '없음')}"
             ),
             inline=False,
