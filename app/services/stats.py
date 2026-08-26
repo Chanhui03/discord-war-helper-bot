@@ -13,7 +13,9 @@ from app.services.scoring import (
     performance_score,
     role_score,
     tier_score,
+    trait_score,
 )
+from app.traits import CHAMPS, SHOTCALL
 
 SOLO_QUEUE = "RANKED_SOLO_5x5"
 RECENT_MATCH_COUNT = 20
@@ -179,12 +181,15 @@ def build_profile(
     custom_games: int = 0,
     custom_wins: int = 0,
     last_role: Optional[str] = None,
+    traits: Optional[Dict[str, Any]] = None,
 ) -> PlayerProfile:
     """저장된 전적과 내전 기록에서 밸런싱용 스냅샷을 만든다.
 
     직전 내전에서 기피 라인을 갔다면 이번에는 그 라인 배정을 금지한다.
+    traits 는 {지표: (평균, 평가 인원)} 이고, 내전 기록이 쌓일수록 힘을 잃는다.
     """
     stats = player.stats
+    rated = traits or {}
     return PlayerProfile(
         player_id=player.id,
         display=f"{player.riot_game_name}#{player.riot_tagline}",
@@ -198,4 +203,6 @@ def build_profile(
         avoid_role=player.avoid_role,
         must_avoid=bool(player.avoid_role and last_role == player.avoid_role),
         role_scores={row.role: row.role_score for row in player.roles},
+        mastery=trait_score(*rated.get(CHAMPS, (None, 0)), custom_games),
+        shotcall=trait_score(*rated.get(SHOTCALL, (None, 0)), custom_games),
     )

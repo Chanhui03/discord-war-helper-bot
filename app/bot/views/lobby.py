@@ -14,6 +14,7 @@ from app.database.repositories import (
     leave_match,
     save_teams,
     swap_team_slots,
+    trait_scores,
     unwatch_match,
     watch_match,
 )
@@ -74,6 +75,12 @@ def teams_embed(match, result) -> discord.Embed:
             value="이번 참가자 구성으로는 기피 라인을 모두 피할 수 없었습니다.",
             inline=False,
         )
+    if not result.leaders_split:
+        embed.add_field(
+            name="⚠️ 오더 분리 미적용",
+            value="오더 상위 2명을 서로 다른 팀에 둘 수 없었습니다.",
+            inline=False,
+        )
 
     by_id = {entry.player_id: entry for entry in match.participants}
     order = {role: index for index, role in enumerate(ROLES)}
@@ -96,11 +103,13 @@ async def match_profiles(session, match):
     previous = await last_assigned_roles(
         session, player_ids, match.discord_server_id, exclude_match_id=match.id
     )
+    traits = await trait_scores(session, player_ids)
     return [
         build_profile(
             entry.player,
             *records.get(entry.player_id, (0, 0)),
             last_role=previous.get(entry.player_id),
+            traits=traits.get(entry.player_id),
         )
         for entry in match.participants
     ]

@@ -37,6 +37,12 @@ ROLE_MULTIPLIERS = {
 
 NEUTRAL = 50.0
 
+# 주관 지표(오더능력·챔피언폭)를 반영하기 위한 최소 평가 인원. 한 사람이 남의 값을
+# 마음대로 정하지 못하게 한다.
+TRAIT_MIN_VOTES = 3
+# 내전을 이만큼 치르면 주관 지표는 힘을 잃고 실제 기록에 자리를 넘긴다.
+TRAIT_FADE_GAMES = 10
+
 def tier_score(tier: Optional[str], division: Optional[str], lp: int) -> Optional[float]:
     """티어/디비전/LP 를 0~100 으로 정규화한다. 언랭이면 None."""
     if not tier:
@@ -65,6 +71,23 @@ def role_score(games: int, win_rate: float, avg_kda: float) -> float:
 def performance_score(avg_kda: float) -> float:
     """KDA 를 0~100 으로 환산한다. KDA 5 이상을 만점으로 본다."""
     return min(avg_kda / 5.0, 1.0) * 100
+
+def trait_score(
+    average: Optional[float], votes: int, custom_games: int
+) -> Optional[float]:
+    """1~10 평균을 0~100 으로 편다. 반영할 수 없으면 None(가중치 재분배).
+
+    표가 적으면 아예 쓰지 않고, 내전 기록이 쌓일수록 중립(50)으로 끌어당겨
+    TRAIT_FADE_GAMES 판에서 완전히 사라진다.
+    """
+    if average is None or votes < TRAIT_MIN_VOTES:
+        return None
+
+    weight = 1.0 - min(custom_games / TRAIT_FADE_GAMES, 1.0)
+    if weight <= 0:
+        return None
+
+    return NEUTRAL + (average - 5.5) / 4.5 * NEUTRAL * weight
 
 def base_score(
     tier: Optional[float] = None,

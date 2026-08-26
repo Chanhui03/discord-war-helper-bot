@@ -4,7 +4,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.match import Match, MatchPlayer, MatchRating, MatchSpectator
-from app.models.player import Player
+from app.models.player import Player, PlayerTrait
 from app.services.matchmaking import LOBBY_SIZE
 from app.services.replay import GameRecord, riot_id_key
 
@@ -65,6 +65,60 @@ async def set_role_preference(
     player = await get_player(session, discord_id, game)
     setattr(player, field, role)
     await session.commit()
+
+async def save_trait(
+    session: AsyncSession,
+    target_id: int,
+    rater_discord_id: int,
+    trait: str,
+    score: int,
+) -> None:
+    """주관 지표를 남긴다. 같은 사람이 다시 매기면 덮어쓴다."""
+    result = await session.execute(
+        select(PlayerTrait).where(
+            PlayerTrait.target_id == target_id,
+            PlayerTrait.rater_discord_id == rater_discord_id,
+            PlayerTrait.trait == trait,
+        )
+    )
+    row = result.scalar_one_or_none()
+
+    if row is None:
+        session.add(
+            PlayerTrait(
+                target_id=target_id,
+                rater_discord_id=rater_discord_id,
+                trait=trait,
+                score=score,
+            )
+        )
+    else:
+        row.score = score
+
+    await session.commit()
+
+async def trait_scores(
+    session: AsyncSession, player_ids: Sequence[int]
+) -> Dict[int, Dict[str, Tuple[float, int]]]:
+    """플레이어별 {지표: (평균, 평가 인원)}."""
+    if not player_ids:
+        return {}
+
+    result = await session.execute(
+        select(
+            PlayerTrait.target_id,
+            PlayerTrait.trait,
+            func.avg(PlayerTrait.score).label("average"),
+            func.count().label("votes"),
+        )
+        .where(PlayerTrait.target_id.in_(player_ids))
+        .group_by(PlayerTrait.target_id, PlayerTrait.trait)
+    )
+
+    scores: Dict[int, Dict[str, Tuple[float, int]]] = {}
+    for target_id, trait, average, votes in result:
+        scores.setdefault(target_id, {})[trait] = (float(average), votes)
+    return scores
 
 async def get_open_match(session: AsyncSession, server_id: int) -> Optional[Match]:
     """해당 서버에서 아직 끝나지 않은 내전을 찾는다."""

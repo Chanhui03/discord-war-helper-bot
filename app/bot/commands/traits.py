@@ -1,0 +1,69 @@
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from app.database.repositories import get_player, save_trait, trait_scores
+from app.database.session import session_factory
+from app.services.scoring import TRAIT_MIN_VOTES
+from app.traits import CHAMPS, NEUTRAL_TRAIT, SHOTCALL, TRAIT_LABELS
+
+def summary(scores) -> str:
+    """평가 결과 한 줄. 인원이 모자라면 아직 반영되지 않는다고 알린다."""
+    parts = []
+    for trait, label in TRAIT_LABELS.items():
+        average, votes = scores.get(trait, (None, 0))
+        value = f"{average:.1f}" if average is not None else f"{NEUTRAL_TRAIT:.1f}"
+        note = f"{votes}명" if votes >= TRAIT_MIN_VOTES else f"{votes}/{TRAIT_MIN_VOTES}명"
+        parts.append(f"{label} **{value}** ({note})")
+    return " · ".join(parts)
+
+class Traits(commands.Cog):
+    def __init__(self, bot: commands.Bot) -> None:
+        self.bot = bot
+
+    @app_commands.command(name="능력평가", description="다른 사람의 오더능력과 챔피언폭을 1~10 으로 매깁니다.")
+    @app_commands.describe(
+        member="평가할 사람", shotcall="1~10 (팀 배정에서 상위 2명을 갈라 놓습니다)",
+        champs="1~10",
+    )
+    @app_commands.rename(member="대상", shotcall="오더능력", champs="챔피언폭")
+    @app_commands.guild_only()
+    async def rate(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        shotcall: app_commands.Range[int, 1, 10] = None,
+        champs: app_commands.Range[int, 1, 10] = None,
+    ) -> None:
+        if member.id == interaction.user.id:
+            await interaction.response.send_message(
+                "자기 자신은 평가할 수 없습니다.", ephemeral=True
+            )
+            return
+        if shotcall is None and champs is None:
+            await interaction.response.send_message(
+                "오더능력이나 챔피언폭 중 하나는 입력해주세요.", ephemeral=True
+            )
+            return
+
+        async with session_factory() as session:
+            player = await get_player(session, member.id)
+            if player is None:
+                await interaction.response.send_message(
+                    f"{member.display_name} 님은 아직 `/전적등록`을 하지 않았습니다.",
+                    ephemeral=True,
+                )
+                return
+
+            for trait, score in ((SHOTCALL, shotcall), (CHAMPS, champs)):
+                if score is not None:
+                    await save_trait(session, player.id, interaction.user.id, trait, score)
+
+            scores = (await trait_scores(session, [player.id])).get(player.id, {})
+
+        await interaction.response.send_message(
+            f"<@{member.id}> — {summary(scores)}", ephemeral=True
+        )
+
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(Traits(bot))

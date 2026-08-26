@@ -20,7 +20,7 @@ from app.services.matchmaking import (
 
 def profile(pid, tier=60.0, main=None, secondary=None, win_rate=0.5,
             recent=50.0, performance=50.0, role_scores=None, custom=None,
-            avoid=None, must_avoid=False):
+            avoid=None, must_avoid=False, mastery=None, shotcall=None):
     return PlayerProfile(
         player_id=pid,
         display=f"P{pid}",
@@ -34,6 +34,8 @@ def profile(pid, tier=60.0, main=None, secondary=None, win_rate=0.5,
         avoid_role=avoid,
         must_avoid=must_avoid,
         role_scores=role_scores or {},
+        mastery=mastery,
+        shotcall=shotcall,
     )
 
 def ten(**kwargs):

@@ -45,6 +45,25 @@ class Player(Base):
         lazy="selectin", cascade="all, delete-orphan"
     )
 
+class PlayerTrait(Base):
+    """오더능력·챔피언폭 같은 주관 지표. 여러 명이 매긴 평균을 쓴다.
+
+    평가자는 Riot 계정 등록 없이도 매길 수 있어 Discord 사용자로 둔다.
+    """
+
+    __tablename__ = "player_traits"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_id", "rater_discord_id", "trait", name="uq_player_traits_rater"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
+    rater_discord_id: Mapped[int] = mapped_column(BigInteger)
+    trait: Mapped[str] = mapped_column(String(16))
+    score: Mapped[int] = mapped_column(Integer)
+
 class PlayerStats(Base):
     __tablename__ = "player_stats"
 

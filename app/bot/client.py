@@ -19,6 +19,7 @@ EXTENSIONS = [
     "app.bot.commands.profile",
     "app.bot.commands.customs",
     "app.bot.commands.roles",
+    "app.bot.commands.traits",
     "app.bot.commands.roster",
     "app.bot.commands.war",
     "app.bot.commands.result",

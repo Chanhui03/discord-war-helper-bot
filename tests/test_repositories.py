@@ -22,13 +22,16 @@ from app.database.repositories import (
     pick_mvp,
     ratings_by_rater,
     save_rating,
+    save_trait,
     swap_team_slots,
+    trait_scores,
     unwatch_match,
     watch_match,
     save_teams,
     upsert_player,
 )
 from app.roles import ROLES
+from app.traits import CHAMPS, SHOTCALL
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams
 from app.services.replay import GameRecord, ParticipantRecord, riot_id_key
 from app.services.stats import build_profile, refresh_player_stats
@@ -539,6 +542,35 @@ class TestPositionStats:
         saved = await self.recorded(session)
         player_id = saved.participants[0].player_id
         assert await custom_position_stats(session, player_id, 99) == []
+
+class TestTraits:
+    async def test_average_and_vote_count(self, session):
+        target = await register(session, 1, "trait-target")
+        for rater, score in ((10, 4), (11, 6), (12, 8)):
+            await save_trait(session, target.id, rater, SHOTCALL, score)
+
+        scores = await trait_scores(session, [target.id])
+        assert scores[target.id][SHOTCALL] == (6.0, 3)
+
+    async def test_rerating_overwrites_instead_of_adding(self, session):
+        target = await register(session, 1, "trait-target")
+        await save_trait(session, target.id, 10, CHAMPS, 3)
+        await save_trait(session, target.id, 10, CHAMPS, 9)
+
+        assert (await trait_scores(session, [target.id]))[target.id][CHAMPS] == (9.0, 1)
+
+    async def test_traits_are_kept_apart(self, session):
+        target = await register(session, 1, "trait-target")
+        await save_trait(session, target.id, 10, SHOTCALL, 2)
+        await save_trait(session, target.id, 10, CHAMPS, 10)
+
+        scores = (await trait_scores(session, [target.id]))[target.id]
+        assert (scores[SHOTCALL][0], scores[CHAMPS][0]) == (2.0, 10.0)
+
+    async def test_unrated_players_are_absent(self, session):
+        target = await register(session, 1, "trait-target")
+        assert await trait_scores(session, [target.id]) == {}
+        assert await trait_scores(session, []) == {}
 
 class TestSpectators:
     async def test_watching_needs_no_riot_account(self, session):

@@ -13,7 +13,7 @@
 """
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import combinations, permutations
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -52,6 +52,9 @@ class PlayerProfile:
     # 직전 내전에서 기피 라인을 갔다면 이번에는 기피 라인 배정을 금지한다.
     must_avoid: bool
     role_scores: Dict[str, float]
+    # 서버 인원이 매긴 주관 지표. 반영할 수 없으면 None.
+    mastery: Optional[float] = None
+    shotcall: Optional[float] = None
 
 @dataclass(frozen=True)
 class TeamPlan:
@@ -71,6 +74,8 @@ class BalanceResult:
     evaluated: int
     # 기피 라인 금지 제약을 지킨 결과인지. 지킬 수 있는 조합이 하나도 없으면 False.
     bans_honoured: bool
+    # 오더 상위 2명을 서로 다른 팀에 둘 수 있었는지.
+    leaders_split: bool = True
 
 def power_of(profile: PlayerProfile, role: str) -> float:
     """해당 라인에 배정했을 때의 전투력(설계서 6장 + 6.1)."""
@@ -81,12 +86,24 @@ def power_of(profile: PlayerProfile, role: str) -> float:
             recent_form=profile.recent_form,
             performance=profile.performance,
             custom=profile.custom,
+            mastery=profile.mastery,
         ),
         role,
         profile.main_role,
         profile.secondary_role,
         profile.avoid_role,
     )
+
+def top_shotcallers(profiles: Sequence[PlayerProfile]) -> Tuple[int, ...]:
+    """오더 점수 상위 2명. 오더는 팀당 한 명이면 되는 자원이라 갈라 놓는다.
+
+    점수를 더하는 방식으로 다루면 '오더 둘이 한 팀'이 최적해가 되어버린다.
+    """
+    rated = [profile for profile in profiles if profile.shotcall is not None]
+    if len(rated) < 2:
+        return ()
+    ranked = sorted(rated, key=lambda profile: profile.shotcall, reverse=True)
+    return tuple(profile.player_id for profile in ranked[:2])
 
 def power_table(profiles: Sequence[PlayerProfile]) -> Dict[int, Dict[str, float]]:
     return {
@@ -186,6 +203,7 @@ def score_assignment(
     탐색을 하지 않으므로 splits / evaluated 는 0이다.
     """
     table = power_table(profiles)
+    leaders = set(top_shotcallers(profiles))
     teams: Dict[str, List[Tuple[PlayerProfile, str]]] = {"A": [], "B": []}
     for profile in profiles:
         team, role = assignment[profile.player_id]
@@ -208,25 +226,39 @@ def score_assignment(
             is_banned([member for member, _ in members], [role for _, role in members])
             for members in teams.values()
         ),
+        leaders_split=(
+            not leaders
+            or len({member.player_id for member, _ in teams["A"]} & set(leaders)) == 1
+        ),
     )
 
 def find_best_teams(
     profiles: Sequence[PlayerProfile],
     rng: Optional[random.Random] = None,
 ) -> BalanceResult:
-    """기피 라인 금지를 지켜 탐색하고, 지킬 수 없으면 제약을 풀고 다시 찾는다."""
+    """제약을 지켜 탐색하고, 지킬 수 없으면 하나씩 풀어가며 다시 찾는다.
+
+    기피 라인 금지가 오더 분리보다 우선이다. 기피는 직전 내전에 대한 보상이라
+    약속에 가깝지만, 오더 분리는 재미를 위한 조정이기 때문이다.
+    """
     if len(profiles) != LOBBY_SIZE:
         raise ValueError(f"참가자는 {LOBBY_SIZE}명이어야 합니다. (현재 {len(profiles)}명)")
 
-    result = _search(profiles, rng or random, respect_bans=True)
-    if result is None:
-        result = _search(profiles, rng or random, respect_bans=False)
-    return result
+    leaders = top_shotcallers(profiles)
+    for respect_bans in (True, False):
+        for split in (leaders, ()):
+            result = _search(
+                profiles, rng or random, respect_bans=respect_bans, leaders=split
+            )
+            if result is not None:
+                # 애초에 오더 평가가 없으면 분리 실패가 아니다.
+                return replace(result, leaders_split=not leaders or bool(split))
 
 def _search(
     profiles: Sequence[PlayerProfile],
     rng: random.Random,
     respect_bans: bool,
+    leaders: Sequence[int] = (),
 ) -> Optional[BalanceResult]:
     table = power_table(profiles)
     total_best = sum(max(table[p.player_id].values()) for p in profiles)
@@ -245,6 +277,10 @@ def _search(
         b_index = tuple(i for i in range(LOBBY_SIZE) if i not in a_index)
         team_a = [profiles[i] for i in a_index]
         team_b = [profiles[i] for i in b_index]
+
+        # 오더 두 명 중 정확히 한 명만 A팀이어야 갈라진 것이다.
+        if leaders and len({p.player_id for p in team_a} & set(leaders)) != 1:
+            continue
 
         # 라인 배정과 무관한 항은 분할마다 한 번만 계산한다.
         constant = (

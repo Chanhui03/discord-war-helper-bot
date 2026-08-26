@@ -2,10 +2,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.bot.commands.traits import summary
 from app.bot.messages import NEED_REGISTER
-from app.database.repositories import custom_position_stats, get_player
+from app.database.repositories import custom_position_stats, get_player, trait_scores
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
+from app.services.scoring import TRAIT_FADE_GAMES
 
 # 합계 컬럼. 전체 행은 라인별 행을 이 항목들로 더해서 만든다.
 SUMS = (
@@ -68,25 +70,45 @@ def detail_cells(label: str, total: dict):
         f"{total['wards'] / total['games']:.1f}",
     ]
 
-def stats_embed(player, rows) -> discord.Embed:
+def trait_field(rows, scores) -> str:
+    """평가 값과 그것이 아직 팀 짜기에 반영되는지."""
+    games = sum(row.games for row in rows)
+    left = max(TRAIT_FADE_GAMES - games, 0)
+    note = (
+        f"-# 내전 {games}판 — {left}판 더 하면 팀 짜기에서 빠지고 실제 기록만 남습니다."
+        if left
+        else f"-# 내전 {games}판 — 이제 팀 짜기에는 실제 기록만 씁니다."
+    )
+    return f"{summary(scores)}\n{note}"
+
+def stats_embed(player, rows, scores) -> discord.Embed:
     """전체 한 줄 + 많이 간 라인 순서로 라인별 한 줄."""
-    lines = [("전체", combine(rows))] + [
-        (ROLE_LABELS.get(row.role, "기타"), combine([row])) for row in rows
-    ]
     embed = discord.Embed(
         title=f"{player.riot_game_name}#{player.riot_tagline} 내전 전적",
         colour=discord.Colour.blurple(),
     )
-    embed.add_field(
-        name="기본",
-        value=table(BASIC, [basic_cells(label, total) for label, total in lines]),
-        inline=False,
-    )
-    embed.add_field(
-        name="세부",
-        value=table(DETAIL, [detail_cells(label, total) for label, total in lines]),
-        inline=False,
-    )
+    if rows:
+        lines = [("전체", combine(rows))] + [
+            (ROLE_LABELS.get(row.role, "기타"), combine([row])) for row in rows
+        ]
+        embed.add_field(
+            name="기본",
+            value=table(BASIC, [basic_cells(label, total) for label, total in lines]),
+            inline=False,
+        )
+        embed.add_field(
+            name="세부",
+            value=table(DETAIL, [detail_cells(label, total) for label, total in lines]),
+            inline=False,
+        )
+    else:
+        embed.add_field(
+            name="기록",
+            value="아직 집계할 내전이 없습니다. `/결과`에 사설 전적 파일을 첨부하면 쌓입니다.",
+            inline=False,
+        )
+
+    embed.add_field(name="능력 평가", value=trait_field(rows, scores), inline=False)
     embed.set_footer(text="사설 전적 파일로 확정한 내전만 집계합니다.")
     return embed
 
@@ -99,24 +121,17 @@ class Customs(commands.Cog):
     async def customs(self, interaction: discord.Interaction) -> None:
         async with session_factory() as session:
             player = await get_player(session, interaction.user.id)
-            rows = (
-                await custom_position_stats(session, player.id, interaction.guild_id)
-                if player
-                else []
-            )
+            if player is None:
+                await interaction.response.send_message(NEED_REGISTER, ephemeral=True)
+                return
 
-        if player is None:
-            await interaction.response.send_message(NEED_REGISTER, ephemeral=True)
-            return
-        if not rows:
-            await interaction.response.send_message(
-                "집계할 내전 기록이 없습니다. `/결과`에 사설 전적 파일을 첨부하면 쌓입니다.",
-                ephemeral=True,
+            rows = await custom_position_stats(
+                session, player.id, interaction.guild_id
             )
-            return
+            scores = (await trait_scores(session, [player.id])).get(player.id, {})
 
         await interaction.response.send_message(
-            embed=stats_embed(player, rows), ephemeral=True
+            embed=stats_embed(player, rows, scores), ephemeral=True
         )
 
 async def setup(bot: commands.Bot) -> None:

@@ -25,13 +25,15 @@ def row(role, games, **overrides):
     return SimpleNamespace(role=role, **base)
 
 def blocks(embed):
-    """코드블록 두 개를 각각 줄 목록으로 돌려준다."""
+    """코드블록으로 된 칸만 각각 줄 목록으로 돌려준다."""
     return [
-        field.value.strip("`").strip("\n").split("\n") for field in embed.fields
+        field.value.strip("`").strip("\n").split("\n")
+        for field in embed.fields
+        if field.value.startswith("```")
     ]
 
 def test_header_comes_first_then_the_total_then_each_line():
-    embed = stats_embed(PLAYER, [row("MID", 6), row("TOP", 2)])
+    embed = stats_embed(PLAYER, [row("MID", 6), row("TOP", 2)], {})
     basic, detail = blocks(embed)
 
     assert basic[0].split() == ["라인", "경기", "승", "패", "승률", "KDA", "킬", "데스", "어시"]
@@ -40,14 +42,14 @@ def test_header_comes_first_then_the_total_then_each_line():
     assert [line.split()[0] for line in detail] == ["라인", "전체", "미드", "탑"]
 
 def test_total_row_sums_every_line():
-    embed = stats_embed(PLAYER, [row("MID", 6), row("TOP", 2)])
+    embed = stats_embed(PLAYER, [row("MID", 6), row("TOP", 2)], {})
     basic, _ = blocks(embed)
     total = basic[1].split()
 
     assert total[1:5] == ["8", "4", "4", "50.0%"]
 
 def test_columns_line_up_in_the_monospace_block():
-    embed = stats_embed(PLAYER, [row("MID", 6), row("SUPPORT", 2)])
+    embed = stats_embed(PLAYER, [row("MID", 6), row("SUPPORT", 2)], {})
     for block in blocks(embed):
         assert len({width(line) for line in block}) == 1
 
@@ -69,7 +71,7 @@ def test_numbers_match_the_opgg_style_row():
         wards=563,
         seconds=1800 * 44,
     )
-    basic, detail = blocks(stats_embed(PLAYER, [sample]))
+    basic, detail = blocks(stats_embed(PLAYER, [sample], {}))
 
     assert basic[2].split() == ["미드", "44", "16", "28", "36.4%", "3.79", "4.3", "2.4", "5.0"]
     # DPGR 은 DPM / GPM (골드 대비 딜 가성비).
