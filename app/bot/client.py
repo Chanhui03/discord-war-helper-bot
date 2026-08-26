@@ -3,7 +3,8 @@ import logging
 import discord
 from discord.ext import commands
 
-from app.bot.views.lobby import LobbyView, TeamEditView
+from app.bot.views.lobby import LobbyView
+from app.bot.views.teams import TeamEditView
 from app.bot.views.rating import RatingView
 from app.bot.views.result import ResultView
 from app.config.settings import settings
@@ -19,7 +20,7 @@ EXTENSIONS = [
     "app.bot.commands.profile",
     "app.bot.commands.customs",
     "app.bot.commands.roles",
-    "app.bot.commands.traits",
+    "app.bot.commands.ability",
     "app.bot.commands.roster",
     "app.bot.commands.war",
     "app.bot.commands.result",

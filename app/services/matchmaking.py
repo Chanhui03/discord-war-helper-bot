@@ -245,14 +245,17 @@ def find_best_teams(
         raise ValueError(f"참가자는 {LOBBY_SIZE}명이어야 합니다. (현재 {len(profiles)}명)")
 
     leaders = top_shotcallers(profiles)
-    for respect_bans in (True, False):
-        for split in (leaders, ()):
-            result = _search(
-                profiles, rng or random, respect_bans=respect_bans, leaders=split
-            )
-            if result is not None:
-                # 애초에 오더 평가가 없으면 분리 실패가 아니다.
-                return replace(result, leaders_split=not leaders or bool(split))
+    rng = rng or random
+    for respect_bans, split in ((True, leaders), (True, ()), (False, leaders)):
+        result = _search(profiles, rng, respect_bans=respect_bans, leaders=split)
+        if result is not None:
+            # 애초에 오더 평가가 없으면 분리 실패가 아니다.
+            return replace(result, leaders_split=not leaders or bool(split))
+
+    # 제약을 모두 푼 탐색은 항상 답을 낸다.
+    return replace(
+        _search(profiles, rng, respect_bans=False), leaders_split=not leaders
+    )
 
 def _search(
     profiles: Sequence[PlayerProfile],

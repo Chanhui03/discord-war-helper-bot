@@ -2,12 +2,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from app.bot.commands.traits import summary
 from app.bot.messages import NEED_REGISTER
 from app.database.repositories import custom_position_stats, get_player, trait_scores
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
 from app.services.scoring import TRAIT_FADE_GAMES
+from app.traits import summary
 
 # 합계 컬럼. 전체 행은 라인별 행을 이 항목들로 더해서 만든다.
 SUMS = (
@@ -24,16 +24,16 @@ def width(text: str) -> int:
     """코드블록은 고정폭이지만 한글은 두 칸을 차지한다."""
     return sum(2 if ord(char) > 0x2E7F else 1 for char in text)
 
+def pad(text: str, size: int) -> str:
+    """한글 폭을 감안해 오른쪽 정렬한다."""
+    return text.rjust(size - width(text) + len(text))
+
 def table(columns, rows) -> str:
-    header = "".join(name.rjust(size - width(name) + len(name)) for name, size in columns)
-    lines = [
-        "".join(
-            cell.rjust(size - width(cell) + len(cell))
-            for cell, (_, size) in zip(row, columns)
-        )
-        for row in rows
-    ]
-    return "```\n" + "\n".join([header, *lines]) + "\n```"
+    lines = [[name for name, _ in columns], *rows]
+    return "```\n" + "\n".join(
+        "".join(pad(cell, size) for cell, (_, size) in zip(line, columns))
+        for line in lines
+    ) + "\n```"
 
 def combine(rows) -> dict:
     return {field: sum(getattr(row, field) for row in rows) for field in SUMS}

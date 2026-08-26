@@ -3,10 +3,9 @@ import random
 import pytest
 
 from app.bot.commands.customs import trait_field
-from app.bot.commands.traits import summary
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams, top_shotcallers
 from app.services.scoring import TRAIT_FADE_GAMES, TRAIT_MIN_VOTES, trait_score
-from app.traits import CHAMPS, SHOTCALL
+from app.traits import CHAMPS, SHOTCALL, summary
 from tests.test_matchmaking import profile
 
 class TestTraitScore:

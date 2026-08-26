@@ -4,20 +4,9 @@ from discord.ext import commands
 
 from app.database.repositories import get_player, save_trait, trait_scores
 from app.database.session import session_factory
-from app.services.scoring import TRAIT_MIN_VOTES
-from app.traits import CHAMPS, NEUTRAL_TRAIT, SHOTCALL, TRAIT_LABELS
+from app.traits import CHAMPS, SHOTCALL, summary
 
-def summary(scores) -> str:
-    """평가 결과 한 줄. 인원이 모자라면 아직 반영되지 않는다고 알린다."""
-    parts = []
-    for trait, label in TRAIT_LABELS.items():
-        average, votes = scores.get(trait, (None, 0))
-        value = f"{average:.1f}" if average is not None else f"{NEUTRAL_TRAIT:.1f}"
-        note = f"{votes}명" if votes >= TRAIT_MIN_VOTES else f"{votes}/{TRAIT_MIN_VOTES}명"
-        parts.append(f"{label} **{value}** ({note})")
-    return " · ".join(parts)
-
-class Traits(commands.Cog):
+class Ability(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
@@ -66,4 +55,4 @@ class Traits(commands.Cog):
         )
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(Traits(bot))
+    await bot.add_cog(Ability(bot))

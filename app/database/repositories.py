@@ -11,6 +11,10 @@ from app.services.replay import GameRecord, riot_id_key
 # 재시작 때 평점 버튼을 되살릴 내전 수.
 RECENT_MATCH_LIMIT = 20
 
+def _finished_in(server_id: int):
+    """집계는 모두 '그 서버에서 끝난 내전'만 본다."""
+    return Match.completed.is_(True), Match.discord_server_id == server_id
+
 async def upsert_player(
     session: AsyncSession,
     *,
@@ -284,11 +288,7 @@ async def custom_records(
     result = await session.execute(
         select(MatchPlayer.player_id, func.count().label("games"), wins.label("wins"))
         .join(Match, Match.id == MatchPlayer.match_id)
-        .where(
-            Match.completed.is_(True),
-            Match.discord_server_id == server_id,
-            MatchPlayer.player_id.in_(player_ids),
-        )
+        .where(*_finished_in(server_id), MatchPlayer.player_id.in_(player_ids))
         .group_by(MatchPlayer.player_id)
     )
     return {row.player_id: (row.games, int(row.wins or 0)) for row in result}
@@ -311,8 +311,7 @@ async def custom_stats(
         )
         .join(Match, Match.id == MatchPlayer.match_id)
         .where(
-            Match.completed.is_(True),
-            Match.discord_server_id == server_id,
+            *_finished_in(server_id),
             MatchPlayer.player_id == player_id,
             MatchPlayer.kills.isnot(None),
         )
@@ -360,8 +359,7 @@ async def custom_position_stats(
         )
         .join(Match, Match.id == MatchPlayer.match_id)
         .where(
-            Match.completed.is_(True),
-            Match.discord_server_id == server_id,
+            *_finished_in(server_id),
             MatchPlayer.player_id == player_id,
             # 경기 시간이 없는 기록(버튼으로만 확정한 내전)은 분당 지표를 낼 수 없다.
             Match.duration.isnot(None),
@@ -544,7 +542,7 @@ async def mvp_counts(
     result = await session.execute(
         select(MatchRating.match_id, MatchRating.target_id, func.avg(MatchRating.score), func.count())
         .join(Match, Match.id == MatchRating.match_id)
-        .where(Match.completed.is_(True), Match.discord_server_id == server_id)
+        .where(*_finished_in(server_id))
         .group_by(MatchRating.match_id, MatchRating.target_id)
     )
 
