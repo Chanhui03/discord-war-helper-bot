@@ -19,8 +19,8 @@ from app.services.replay import ReplayError, find_game, riot_id_key
 log = logging.getLogger(__name__)
 
 MISMATCH = (
-    "파일의 승패가 봇이 짠 팀과 어긋납니다. 로비에서 진영을 바꿔 들어갔다면 "
-    "버튼으로 승리 팀을 직접 골라주세요."
+    "파일로는 승리 팀을 알 수 없습니다. 로비에서 진영을 바꿔 들어갔거나 한쪽 팀이 "
+    "통째로 안 맞는 경우입니다. 버튼으로 승리 팀을 직접 골라주세요."
 )
 
 class Result(commands.Cog):
@@ -83,7 +83,15 @@ class Result(commands.Cog):
                 [entry.player_id for entry in saved.participants],
                 saved.discord_server_id,
             )
-            embed = result_embed(saved, status, records)
+            # 파일에 없던 참가자는 승패만 들어갔다. 그대로 알려준다.
+            found = set(game.by_riot_id())
+            missing = [
+                entry
+                for entry in saved.participants
+                if riot_id_key(entry.player.riot_game_name, entry.player.riot_tagline)
+                not in found
+            ]
+            embed = result_embed(saved, status, records, missing)
 
         event(
             log,
@@ -91,6 +99,7 @@ class Result(commands.Cog):
             match=saved.id,
             winner=status,
             game=game.game_id,
+            missing=len(missing),
             by=interaction.user.id,
         )
         await interaction.followup.send(embed=embed, view=RatingView(saved.id))

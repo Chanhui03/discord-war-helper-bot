@@ -409,6 +409,27 @@ class TestRecordedResults:
             assert entry.gold == 500 * index
             assert entry.win is (entry.team == "A")
 
+    async def test_unmatched_players_still_get_the_team_result(self, session):
+        """한 명이 다른 계정으로 뛰었어도 나머지 아홉 명의 성적은 남는다."""
+        match = await named_match(session)
+        record = game_for(match)
+        dropped = record.participants[0]
+        partial = replace(
+            record,
+            participants=tuple(
+                one for one in record.participants if one is not dropped
+            ),
+        )
+
+        status, saved = await finish_match_with_records(session, match.id, partial)
+        by_id = {entry.player_id: entry for entry in saved.participants}
+        left_out = by_id[match.participants[0].player_id]
+
+        assert status == "A"
+        assert left_out.win is (left_out.team == "A")
+        assert left_out.kills is None
+        assert sum(entry.kills is not None for entry in saved.participants) == 9
+
     async def test_winner_comes_from_the_file(self, session):
         match = await named_match(session)
         status, saved = await finish_match_with_records(

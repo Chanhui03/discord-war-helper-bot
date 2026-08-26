@@ -90,11 +90,21 @@ def test_find_game_skips_games_missing_a_participant():
     payload = [partial, ten_players(game_id=4, created_at=100)]
     assert find_game(json.dumps(payload), keys()).game_id == 4
 
+def test_find_game_allows_a_couple_of_unmatched_players():
+    """계정을 바꿔 뛴 한두 명 때문에 나머지 성적까지 버리지는 않는다."""
+    partial = game(
+        [participant(i + 1, f"플레이어{i}", "KR1", 100, i < 5) for i in range(8)],
+        game_id=5,
+    )
+    assert find_game(json.dumps([partial]), keys()).game_id == 5
+
 def test_find_game_names_who_could_not_be_matched():
-    payload = [game([participant(i + 1, f"플레이어{i}", "KR1", 100, True) for i in range(9)])]
+    """세 명 넘게 빠지면 그 경기를 내전으로 보지 않는다."""
+    payload = [game([participant(i + 1, f"플레이어{i}", "KR1", 100, True) for i in range(7)])]
     with pytest.raises(ReplayError) as error:
         find_game(json.dumps(payload), keys())
     assert "플레이어9#kr1" in str(error.value)
+    assert "8명 이상" in str(error.value)
 
 def test_find_game_rejects_only_aborted_games():
     payload = [ten_players()]

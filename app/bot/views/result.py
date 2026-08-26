@@ -40,7 +40,8 @@ def pending_embed(match) -> discord.Embed:
     embed.add_field(name="B팀", value=team_lines(match, "B"))
     return embed
 
-def result_embed(match, winner: str, records) -> discord.Embed:
+def result_embed(match, winner: str, records, missing=()) -> discord.Embed:
+    """missing 은 전적 파일에서 못 찾은 참가자들. 승패만 기록된 사람들이다."""
     embed = discord.Embed(
         title=f"내전 #{match.id} 결과",
         description=f"**{winner}팀 승리**",
@@ -50,6 +51,13 @@ def result_embed(match, winner: str, records) -> discord.Embed:
         mark = "승" if team == winner else "패"
         embed.add_field(
             name=f"{team}팀 ({mark})", value=team_lines(match, team, records), inline=False
+        )
+    if missing:
+        embed.add_field(
+            name=f"못 맞춘 {len(missing)}명",
+            value=" ".join(f"<@{entry.player.discord_id}>" for entry in missing)
+            + "\n-# 승패만 기록됐습니다. Riot ID 가 바뀌었다면 `/전적등록`으로 다시 연결해주세요.",
+            inline=False,
         )
     return embed
 

@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 # 중단된 경기는 스탯이 의미 없다. endOfGameResult 가 Abort_ 로 시작한다.
 ABORTED_PREFIX = "Abort"
 
+# 이만큼까지는 못 맞춰도 그 경기를 내전으로 본다. 계정을 바꿔 뛴 한두 명 때문에
+# 나머지 여덟 명의 성적까지 버리지 않기 위해서다.
+MAX_UNMATCHED = 2
+
 # 구 클라이언트 기록에는 teamPosition 이 없어 timeline 의 lane/role 로 라인을 읽는다.
 LANE_ROLES = {"TOP": "TOP", "JUNGLE": "JUNGLE", "MIDDLE": "MID"}
 
@@ -116,7 +120,11 @@ def load_games(payload: Any) -> List[GameRecord]:
     return sorted(records, key=lambda record: record.created_at, reverse=True)
 
 def find_game(raw: str, riot_ids: Sequence[str]) -> GameRecord:
-    """참가자 전원이 들어 있는 가장 최근 경기를 고른다."""
+    """참가자 전원이 들어 있는 가장 최근 경기를 고른다.
+
+    전원이 있는 경기가 없으면 MAX_UNMATCHED 명까지 빠진 경기를 대신 고른다.
+    못 맞춘 사람은 개인 성적 없이 승패만 남는다.
+    """
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -131,10 +139,17 @@ def find_game(raw: str, riot_ids: Sequence[str]) -> GameRecord:
         if wanted <= set(game.by_riot_id()):
             return game
 
+    # 전원이 있는 경기가 없으면 조건을 낮춰 다시 본다.
+    enough = max(len(wanted) - MAX_UNMATCHED, 1)
+    for game in games:
+        if len(wanted & set(game.by_riot_id())) >= enough:
+            return game
+
     # 가장 많이 겹치는 경기를 근거로 누가 빠졌는지 알려준다.
     closest = max(games, key=lambda game: len(wanted & set(game.by_riot_id())))
     missing = sorted(wanted - set(closest.by_riot_id()))
     raise ReplayError(
         "참가자가 일치하는 경기를 찾지 못했습니다. "
+        f"{len(wanted)}명 중 {enough}명 이상 맞아야 합니다. "
         f"맞출 수 없는 사람: {', '.join(missing)}"
     )

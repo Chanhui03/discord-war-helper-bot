@@ -398,9 +398,9 @@ async def finish_match_with_records(
     paired = [
         (
             entry,
-            records[
+            records.get(
                 riot_id_key(entry.player.riot_game_name, entry.player.riot_tagline)
-            ],
+            ),
         )
         for entry in match.participants
     ]
@@ -408,13 +408,19 @@ async def finish_match_with_records(
     # 로비에서 진영을 바꿔 들어갔다면 우리 A/B 와 실제 승패가 어긋난다. 틀린 승리
     # 팀은 custom_records 집계까지 오염시키므로, 쓰기 전에 확인하고 아무것도 남기지
     # 않는다. (여기서 rollback 을 하면 호출자가 든 객체까지 만료된다)
-    a_won = {record.win for entry, record in paired if entry.team == "A"}
-    b_won = {record.win for entry, record in paired if entry.team == "B"}
+    # 한쪽 팀이 통째로 안 맞으면 승패를 알 수 없어 같은 길로 보낸다.
+    a_won = {r.win for entry, r in paired if r and entry.team == "A"}
+    b_won = {r.win for entry, r in paired if r and entry.team == "B"}
     if len(a_won) != 1 or len(b_won) != 1 or a_won == b_won:
         return "mismatch", None
 
+    winner = "A" if a_won == {True} else "B"
     for entry, record in paired:
-        entry.win = record.win
+        # 못 맞춘 참가자도 팀 승패는 남긴다. 개인 성적만 비워 둔다.
+        entry.win = entry.team == winner
+        if record is None:
+            continue
+
         entry.kills = record.kills
         entry.deaths = record.deaths
         entry.assists = record.assists
@@ -428,8 +434,6 @@ async def finish_match_with_records(
         entry.played_role = record.position
 
     match.duration = game.duration
-
-    winner = "A" if a_won == {True} else "B"
     match.team_a_score = int(winner == "A")
     match.team_b_score = int(winner == "B")
     match.completed = True
