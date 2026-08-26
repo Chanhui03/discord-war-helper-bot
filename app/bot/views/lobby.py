@@ -4,6 +4,7 @@ import logging
 import discord
 
 from app.bot.messages import NEED_REGISTER
+from app.bot.views.persistent import PersistentView
 from app.bot.views.teams import TeamEditView, match_profiles, teams_embed
 from app.database.repositories import (
     delete_match,
@@ -48,14 +49,8 @@ def lobby_embed(match) -> discord.Embed:
         embed.set_footer(text="인원이 모두 찼습니다.")
     return embed
 
-class LobbyView(discord.ui.View):
-    """재시작 후에도 동작하도록 timeout 없이 match_id 를 custom_id 에 담는다."""
-
-    def __init__(self, match_id: int) -> None:
-        super().__init__(timeout=None)
-        self.match_id = match_id
-        for item in self.children:
-            item.custom_id = f"lobby:{item.custom_id}:{match_id}"
+class LobbyView(PersistentView):
+    PREFIX = "lobby"
 
     async def _update(self, interaction: discord.Interaction, action) -> None:
         async with session_factory() as session:

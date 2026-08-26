@@ -5,6 +5,7 @@
 
 import discord
 
+from app.bot.views.persistent import PersistentView
 from app.database.repositories import (
     get_match,
     match_ratings,
@@ -136,14 +137,10 @@ class RatingPanel(discord.ui.View):
         total = len(targets(match, self.rater_discord_id))
         return f"평가할 사람을 고르고 점수를 누르세요. **{len(given)} / {total}명** 완료"
 
-class RatingView(discord.ui.View):
-    """결과 메시지에 붙는 영속 버튼. 재시작 후에도 동작한다."""
+class RatingView(PersistentView):
+    """결과 메시지에 붙는 영속 버튼."""
 
-    def __init__(self, match_id: int) -> None:
-        super().__init__(timeout=None)
-        self.match_id = match_id
-        for item in self.children:
-            item.custom_id = f"rating:{item.custom_id}:{match_id}"
+    PREFIX = "rating"
 
     @discord.ui.button(label="평점 남기기", style=discord.ButtonStyle.primary, custom_id="rate")
     async def rate(self, interaction: discord.Interaction, button: discord.ui.Button):

@@ -2,6 +2,7 @@ import logging
 
 import discord
 
+from app.bot.views.persistent import PersistentView
 from app.bot.views.rating import RatingView
 from app.database.repositories import custom_records, finish_match
 from app.database.session import session_factory
@@ -61,14 +62,8 @@ def result_embed(match, winner: str, records, missing=()) -> discord.Embed:
         )
     return embed
 
-class ResultView(discord.ui.View):
-    """재시작 후에도 동작하도록 timeout 없이 match_id 를 custom_id 에 담는다."""
-
-    def __init__(self, match_id: int) -> None:
-        super().__init__(timeout=None)
-        self.match_id = match_id
-        for item in self.children:
-            item.custom_id = f"result:{item.custom_id}:{match_id}"
+class ResultView(PersistentView):
+    PREFIX = "result"
 
     async def _finish(self, interaction: discord.Interaction, winner: str) -> None:
         async with session_factory() as session:
