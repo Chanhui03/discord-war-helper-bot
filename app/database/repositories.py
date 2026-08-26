@@ -194,6 +194,26 @@ async def save_teams(session: AsyncSession, match_id: int, result) -> Optional[M
 
     return await _commit_and_reload(session, match)
 
+async def swap_team_slots(
+    session: AsyncSession, match_id: int, first_id: int, second_id: int
+) -> Optional[Match]:
+    """두 참가자의 팀과 라인을 통째로 맞바꾼다.
+
+    자리를 교환하므로 팀별 라인 5개는 그대로 유지된다.
+    """
+    match = await get_match(session, match_id)
+    if match is None or match.completed:
+        return None
+
+    by_id = {entry.player_id: entry for entry in match.participants}
+    first, second = by_id.get(first_id), by_id.get(second_id)
+    if first is None or second is None:
+        return None
+
+    first.team, second.team = second.team, first.team
+    first.role, second.role = second.role, first.role
+    return await _commit_and_reload(session, match)
+
 async def custom_records(
     session: AsyncSession, player_ids: Sequence[int], server_id: int
 ) -> Dict[int, Tuple[int, int]]:

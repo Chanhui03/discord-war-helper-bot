@@ -3,7 +3,7 @@ import logging
 import discord
 from discord.ext import commands
 
-from app.bot.views.lobby import LobbyView
+from app.bot.views.lobby import LobbyView, TeamEditView
 from app.bot.views.rating import RatingView
 from app.bot.views.result import ResultView
 from app.config.settings import settings
@@ -55,6 +55,9 @@ class WarBot(commands.Bot):
         for match in matches:
             self.add_view(LobbyView(match.id))
             self.add_view(ResultView(match.id))
+            # 팀이 이미 짜인 내전은 자리 교환 메뉴도 되살린다.
+            if any(entry.team for entry in match.participants):
+                self.add_view(TeamEditView(match))
 
         # 평점은 결과가 확정된 뒤에 붙으므로 끝난 내전에서 되살린다.
         for match in list(matches) + list(finished):

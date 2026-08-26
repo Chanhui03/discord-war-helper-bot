@@ -20,6 +20,7 @@ from app.database.repositories import (
     pick_mvp,
     ratings_by_rater,
     save_rating,
+    swap_team_slots,
     unwatch_match,
     watch_match,
     save_teams,
@@ -188,6 +189,42 @@ class TestLobby:
         assert all(entry.team in ("A", "B") for entry in saved.participants)
         assert all(entry.role for entry in saved.participants)
         assert len([e for e in saved.participants if e.team == "A"]) == 5
+
+class TestTeamEdit:
+    async def sides(self, session):
+        """팀 배정이 끝난 내전과 A팀·B팀 첫 참가자."""
+        match = await staged_match(session)
+        a = next(e for e in match.participants if e.team == "A")
+        b = next(e for e in match.participants if e.team == "B")
+        return match, a, b
+
+    async def test_swap_exchanges_both_slots(self, session):
+        match, a, b = await self.sides(session)
+        before = ((a.team, a.role), (b.team, b.role))
+
+        updated = await swap_team_slots(session, match.id, a.player_id, b.player_id)
+        by_id = {entry.player_id: entry for entry in updated.participants}
+
+        assert (by_id[a.player_id].team, by_id[a.player_id].role) == before[1]
+        assert (by_id[b.player_id].team, by_id[b.player_id].role) == before[0]
+
+    async def test_teams_keep_five_distinct_roles(self, session):
+        match, a, b = await self.sides(session)
+        updated = await swap_team_slots(session, match.id, a.player_id, b.player_id)
+
+        for team in ("A", "B"):
+            roles = [e.role for e in updated.participants if e.team == team]
+            assert len(roles) == len(set(roles)) == 5
+
+    async def test_swap_is_rejected_after_the_result(self, session):
+        match, a, b = await self.sides(session)
+        await finish_match(session, match.id, "A")
+
+        assert await swap_team_slots(session, match.id, a.player_id, b.player_id) is None
+
+    async def test_unknown_player_is_rejected(self, session):
+        match, a, _ = await self.sides(session)
+        assert await swap_team_slots(session, match.id, a.player_id, 99999) is None
 
 class TestResults:
     async def test_finish_match_records_wins_and_scores(self, session):

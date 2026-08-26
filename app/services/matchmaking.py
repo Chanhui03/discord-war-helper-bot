@@ -178,6 +178,38 @@ def balance_score(
     breakdown = balance_breakdown(team_a, team_b, table)
     return sum(BALANCE_WEIGHTS[key] * value for key, value in breakdown.items())
 
+def score_assignment(
+    profiles: Sequence[PlayerProfile], assignment: Dict[int, Tuple[str, str]]
+) -> BalanceResult:
+    """사람이 직접 바꾼 배정을 자동 배정과 같은 기준으로 채점한다.
+
+    탐색을 하지 않으므로 splits / evaluated 는 0이다.
+    """
+    table = power_table(profiles)
+    teams: Dict[str, List[Tuple[PlayerProfile, str]]] = {"A": [], "B": []}
+    for profile in profiles:
+        team, role = assignment[profile.player_id]
+        teams[team].append((profile, role))
+
+    plans = {
+        side: make_plan(
+            [member for member, _ in members], [role for _, role in members], table
+        )
+        for side, members in teams.items()
+    }
+    return BalanceResult(
+        team_a=plans["A"],
+        team_b=plans["B"],
+        score=balance_score(plans["A"], plans["B"], table),
+        breakdown=balance_breakdown(plans["A"], plans["B"], table),
+        splits=0,
+        evaluated=0,
+        bans_honoured=not any(
+            is_banned([member for member, _ in members], [role for _, role in members])
+            for members in teams.values()
+        ),
+    )
+
 def find_best_teams(
     profiles: Sequence[PlayerProfile],
     rng: Optional[random.Random] = None,

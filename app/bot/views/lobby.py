@@ -13,13 +13,14 @@ from app.database.repositories import (
     last_assigned_roles,
     leave_match,
     save_teams,
+    swap_team_slots,
     unwatch_match,
     watch_match,
 )
 from app.database.session import session_factory
 from app.log import event
 from app.roles import ROLE_LABELS, ROLES
-from app.services.matchmaking import LOBBY_SIZE, find_best_teams
+from app.services.matchmaking import LOBBY_SIZE, find_best_teams, score_assignment
 from app.services.stats import build_profile
 
 log = logging.getLogger(__name__)
@@ -56,7 +57,11 @@ def teams_embed(match, result) -> discord.Embed:
         title=f"내전 #{match.id} 팀 구성",
         description=(
             f"밸런스 점수 **{result.score:.2f}** "
-            f"({result.splits}개 분할 · {result.evaluated:,}개 배정 평가)\n"
+            + (
+                f"({result.splits}개 분할 · {result.evaluated:,}개 배정 평가)\n"
+                if result.evaluated
+                else "(직접 바꾼 구성)\n"
+            )
             + " · ".join(
                 f"{key} {value:.1f}" for key, value in result.breakdown.items()
             )
@@ -83,6 +88,77 @@ def teams_embed(match, result) -> discord.Embed:
             value="\n".join(lines),
         )
     return embed
+
+async def match_profiles(session, match):
+    """이 내전 참가자들의 밸런싱용 스냅샷. 팀 생성과 팀 수정이 같이 쓴다."""
+    player_ids = [entry.player_id for entry in match.participants]
+    records = await custom_records(session, player_ids, match.discord_server_id)
+    previous = await last_assigned_roles(
+        session, player_ids, match.discord_server_id, exclude_match_id=match.id
+    )
+    return [
+        build_profile(
+            entry.player,
+            *records.get(entry.player_id, (0, 0)),
+            last_role=previous.get(entry.player_id),
+        )
+        for entry in match.participants
+    ]
+
+class SwapSelect(discord.ui.Select):
+    """고른 두 사람의 자리(팀·라인)를 맞바꾼다. 자리 교환이라 라인 구성은 유지된다."""
+
+    def __init__(self, match) -> None:
+        options = [
+            discord.SelectOption(
+                label=f"{entry.player.riot_game_name}#{entry.player.riot_tagline}",
+                value=str(entry.player_id),
+                description=f"{entry.team}팀 · {ROLE_LABELS[entry.role]}",
+            )
+            for entry in match.participants
+        ]
+        super().__init__(
+            placeholder="자리를 바꿀 두 명을 고르세요",
+            min_values=2,
+            max_values=2,
+            options=options,
+            custom_id=f"teams:swap:{match.id}",
+        )
+        self.match_id = match.id
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        first, second = (int(value) for value in self.values)
+
+        async with session_factory() as session:
+            match = await swap_team_slots(session, self.match_id, first, second)
+            if match is None:
+                await interaction.response.send_message(
+                    "이미 결과가 확정됐거나 없는 내전입니다.", ephemeral=True
+                )
+                return
+
+            profiles = await match_profiles(session, match)
+            assignment = {
+                entry.player_id: (entry.team, entry.role)
+                for entry in match.participants
+            }
+            embed = teams_embed(match, score_assignment(profiles, assignment))
+
+        event(
+            log,
+            "teams_edited",
+            match=self.match_id,
+            by=interaction.user.id,
+            swapped=f"{first}-{second}",
+        )
+        await interaction.response.edit_message(embed=embed, view=TeamEditView(match))
+
+class TeamEditView(discord.ui.View):
+    """팀 생성 뒤에도 서버 인원 누구나 자리를 바꿀 수 있게 한다."""
+
+    def __init__(self, match) -> None:
+        super().__init__(timeout=None)
+        self.add_item(SwapSelect(match))
 
 class LobbyView(discord.ui.View):
     """재시작 후에도 동작하도록 timeout 없이 match_id 를 custom_id 에 담는다."""
@@ -163,24 +239,7 @@ class LobbyView(discord.ui.View):
                     f"참가자가 {LOBBY_SIZE}명이어야 합니다.", ephemeral=True
                 )
                 return
-            player_ids = [entry.player_id for entry in match.participants]
-            records = await custom_records(
-                session, player_ids, match.discord_server_id
-            )
-            previous = await last_assigned_roles(
-                session,
-                player_ids,
-                match.discord_server_id,
-                exclude_match_id=match.id,
-            )
-            profiles = [
-                build_profile(
-                    entry.player,
-                    *records.get(entry.player_id, (0, 0)),
-                    last_role=previous.get(entry.player_id),
-                )
-                for entry in match.participants
-            ]
+            profiles = await match_profiles(session, match)
 
         # 조합 탐색은 1초 이상 걸릴 수 있어 이벤트 루프를 막지 않는다.
         await interaction.response.defer()
@@ -201,7 +260,7 @@ class LobbyView(discord.ui.View):
             power_b=round(result.team_b.power, 1),
         )
         self.stop()
-        await interaction.edit_original_response(embed=embed, view=None)
+        await interaction.edit_original_response(embed=embed, view=TeamEditView(match))
 
     @discord.ui.button(label="삭제", style=discord.ButtonStyle.danger, custom_id="delete")
     async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):

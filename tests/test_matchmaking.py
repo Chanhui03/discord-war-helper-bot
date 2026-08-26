@@ -15,6 +15,7 @@ from app.services.matchmaking import (
     make_plan,
     power_of,
     power_table,
+    score_assignment,
 )
 
 def profile(pid, tier=60.0, main=None, secondary=None, win_rate=0.5,
@@ -335,3 +336,55 @@ class TestAvoidRole:
         player = profile(1, main="MID", secondary="TOP", avoid="JUNGLE")
         assert power_of(player, "JUNGLE") < power_of(player, "ADC")
         assert power_of(player, "ADC") < power_of(player, "TOP")
+
+
+class TestScoreAssignment:
+    """사람이 바꾼 배정을 자동 배정과 같은 잣대로 채점한다."""
+
+    def assignment(self, result):
+        return {
+            member.player_id: (side, role)
+            for side, team in (("A", result.team_a), ("B", result.team_b))
+            for member, role in team.members
+        }
+
+    def test_same_assignment_gets_the_same_score(self):
+        players = [profile(i, tier=40.0 + i * 4, main=ROLES[i % 5]) for i in range(LOBBY_SIZE)]
+        best = find_best_teams(players, rng=random.Random(3))
+        scored = score_assignment(players, self.assignment(best))
+
+        assert scored.score == pytest.approx(best.score)
+        assert scored.breakdown == pytest.approx(best.breakdown)
+        assert scored.team_a.power == pytest.approx(best.team_a.power)
+        assert (scored.splits, scored.evaluated) == (0, 0)
+
+    def test_swapping_two_players_changes_the_score(self):
+        players = [profile(i, tier=40.0 + i * 4, main=ROLES[i % 5]) for i in range(LOBBY_SIZE)]
+        best = find_best_teams(players, rng=random.Random(3))
+
+        moved = self.assignment(best)
+        first, second = best.team_a.members[0][0], best.team_b.members[0][0]
+        moved[first.player_id], moved[second.player_id] = (
+            moved[second.player_id],
+            moved[first.player_id],
+        )
+        swapped = score_assignment(players, moved)
+
+        # 최적해에서 두 명을 맞바꿨으니 더 좋아질 수는 없다.
+        assert swapped.score >= best.score
+        assert len(swapped.team_a.members) == TEAM_SIZE
+        assert {role for _, role in swapped.team_a.members} == set(ROLES)
+
+    def test_ban_violation_is_reported(self):
+        players = [profile(i, main=ROLES[i % 5]) for i in range(LOBBY_SIZE)]
+        players[0] = profile(0, main="TOP", avoid="MID", must_avoid=True)
+        best = find_best_teams(players, rng=random.Random(3))
+
+        moved = self.assignment(best)
+        side, _ = moved[0]
+        # 0번을 기피 라인에 앉히고, 같은 팀에서 그 라인을 쓰던 사람과 자리를 바꾼다.
+        [other] = [pid for pid, (team, role) in moved.items() if team == side and role == "MID"]
+        moved[0], moved[other] = (side, "MID"), (side, moved[0][1])
+
+        assert score_assignment(players, moved).bans_honoured is False
+        assert score_assignment(players, self.assignment(best)).bans_honoured is True
