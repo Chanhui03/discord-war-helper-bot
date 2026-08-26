@@ -2,6 +2,7 @@ import random
 
 import pytest
 
+from app.bot.commands.ability import LIST_LIMIT, status_embed
 from app.bot.commands.customs import trait_field
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams, top_shotcallers
 from app.services.scoring import TRAIT_FADE_GAMES, TRAIT_MIN_VOTES, trait_score
@@ -57,10 +58,10 @@ class TestShotcallSplit:
 
 class TestDisplay:
     def test_summary_shows_how_many_more_votes_are_needed(self):
-        line = summary({SHOTCALL: (7.5, TRAIT_MIN_VOTES), CHAMPS: (4.0, 1)})
+        line = summary({SHOTCALL: (7.5, TRAIT_MIN_VOTES), CHAMPS: (4.0, 0)})
 
         assert f"오더능력 **7.5** ({TRAIT_MIN_VOTES}명)" in line
-        assert f"챔피언폭 **4.0** (1/{TRAIT_MIN_VOTES}명)" in line
+        assert f"챔피언폭 **4.0** (0/{TRAIT_MIN_VOTES}명)" in line
 
     def test_unrated_players_show_the_middle_value(self):
         assert "오더능력 **5.5** (0/" in summary({})
@@ -71,3 +72,41 @@ class TestDisplay:
         rows = [SimpleNamespace(games=4)]
         assert f"{TRAIT_FADE_GAMES - 4}판 더" in trait_field(rows, {})
         assert "실제 기록만" in trait_field([SimpleNamespace(games=TRAIT_FADE_GAMES)], {})
+
+
+class TestStatusEmbed:
+    def player(self, n):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(id=n, discord_id=1000 + n, riot_game_name=f"이름{n}")
+
+    def test_it_lists_everyone_with_their_scores(self):
+        embed = status_embed(
+            [self.player(0), self.player(1)],
+            {1: {SHOTCALL: (8.0, 2), CHAMPS: (6.0, 2)}},
+        )
+        lines = embed.description.split("\n")
+
+        assert embed.title == "능력평가 현황 2명"
+        assert lines[0].startswith("1. <@1000> —")
+        assert "오더능력 **8.0** (2명)" in lines[1]
+
+    def test_unrated_players_come_first(self):
+        embed = status_embed(
+            [self.player(0), self.player(1)],
+            {0: {SHOTCALL: (8.0, 3)}},
+        )
+        lines = embed.description.split("\n")
+
+        assert lines[0].startswith("1. <@1001>")
+        assert "오더능력 **5.5** (0/" in lines[0]
+
+    def test_long_list_is_truncated(self):
+        embed = status_embed([self.player(i) for i in range(LIST_LIMIT + 2)], {})
+        lines = embed.description.split("\n")
+
+        assert len(lines) == LIST_LIMIT + 1
+        assert lines[-1] == "-# 외 2명"
+
+    def test_nobody_registered(self):
+        assert status_embed([], {}).description == "아직 등록한 사람이 없습니다."
