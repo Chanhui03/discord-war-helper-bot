@@ -7,10 +7,13 @@ match-v5 는 사설 게임을 돌려주지 않아 내전의 개인 성적을 채
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # 중단된 경기는 스탯이 의미 없다. endOfGameResult 가 Abort_ 로 시작한다.
 ABORTED_PREFIX = "Abort"
+
+# 구 클라이언트 기록에는 teamPosition 이 없어 timeline 의 lane/role 로 라인을 읽는다.
+LANE_ROLES = {"TOP": "TOP", "JUNGLE": "JUNGLE", "MIDDLE": "MID"}
 
 class ReplayError(Exception):
     pass
@@ -25,12 +28,20 @@ class ParticipantRecord:
     assists: int
     cs: int
     damage: int
+    damage_taken: int
     gold: int
+    wards: int
+    first_blood: bool
+    first_tower: bool
+    # 실제로 간 라인. 읽을 수 없으면 None.
+    position: Optional[str]
 
 @dataclass(frozen=True)
 class GameRecord:
     game_id: int
     created_at: int
+    # 초 단위 경기 시간. 분당 지표(DPM 등)의 분모다.
+    duration: int
     participants: Tuple[ParticipantRecord, ...]
 
     def by_riot_id(self) -> Dict[str, ParticipantRecord]:
@@ -39,6 +50,13 @@ class GameRecord:
 def riot_id_key(game_name: str, tagline: str) -> str:
     """대소문자와 앞뒤 공백을 무시한 비교용 키."""
     return f"{game_name.strip().casefold()}#{tagline.strip().casefold()}"
+
+def position_of(timeline: Dict[str, Any]) -> Optional[str]:
+    """바텀은 원딜/서폿이 같은 라인이라 role 로 갈라야 한다."""
+    lane = timeline.get("lane")
+    if lane == "BOTTOM":
+        return "SUPPORT" if timeline.get("role") == "DUO_SUPPORT" else "ADC"
+    return LANE_ROLES.get(lane)
 
 def _participants(game: Dict[str, Any]) -> Tuple[ParticipantRecord, ...]:
     """participants 의 스탯과 participantIdentities 의 이름을 participantId 로 잇는다.
@@ -72,7 +90,12 @@ def _participants(game: Dict[str, Any]) -> Tuple[ParticipantRecord, ...]:
                 cs=stats.get("totalMinionsKilled", 0)
                 + stats.get("neutralMinionsKilled", 0),
                 damage=stats.get("totalDamageDealtToChampions", 0),
+                damage_taken=stats.get("totalDamageTaken", 0),
                 gold=stats.get("goldEarned", 0),
+                wards=stats.get("wardsPlaced", 0),
+                first_blood=bool(stats.get("firstBloodKill")),
+                first_tower=bool(stats.get("firstTowerKill")),
+                position=position_of(participant.get("timeline", {})),
             )
         )
     return tuple(records)
@@ -84,6 +107,7 @@ def load_games(payload: Any) -> List[GameRecord]:
         GameRecord(
             game_id=game.get("gameId", 0),
             created_at=game.get("gameCreation", 0),
+            duration=game.get("gameDuration", 0),
             participants=_participants(game),
         )
         for game in games

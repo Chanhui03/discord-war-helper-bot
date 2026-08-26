@@ -1,9 +1,11 @@
 import random
+from dataclasses import replace
 
 import pytest
 
 from app.database.repositories import (
     create_match,
+    custom_position_stats,
     custom_records,
     custom_stats,
     delete_match,
@@ -26,6 +28,7 @@ from app.database.repositories import (
     save_teams,
     upsert_player,
 )
+from app.roles import ROLES
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams
 from app.services.replay import GameRecord, ParticipantRecord, riot_id_key
 from app.services.stats import build_profile, refresh_player_stats
@@ -363,6 +366,7 @@ def game_for(match, winner="A", swap=()):
     return GameRecord(
         game_id=1,
         created_at=1,
+        duration=1800,
         participants=tuple(
             ParticipantRecord(
                 riot_id=riot_id_key(
@@ -375,7 +379,12 @@ def game_for(match, winner="A", swap=()):
                 assists=2,
                 cs=100 + index,
                 damage=1000 * index,
+                damage_taken=800 * index,
                 gold=500 * index,
+                wards=index,
+                first_blood=index == 0,
+                first_tower=index == 1,
+                position=ROLES[index % 5],
             )
             for index, entry in enumerate(match.participants)
         ),
@@ -455,6 +464,81 @@ class TestCustomStats:
         _, saved = await finish_match_with_records(session, match.id, game_for(match))
 
         assert await custom_stats(session, saved.participants[0].player_id, 99) is None
+
+class TestPositionStats:
+    """op.gg e스포츠 선수 기록과 같은 라인별 지표의 재료(합계)."""
+
+    async def recorded(self, session, server_id=5):
+        match = await named_match(session, server_id=server_id)
+        _, saved = await finish_match_with_records(session, match.id, game_for(match))
+        return saved
+
+    async def test_sums_and_game_time_are_returned(self, session):
+        saved = await self.recorded(session)
+        # game_for: 30분 경기, index 번째 참가자는 딜 1000n / 받은 딜 800n /
+        # 골드 500n / CS 100+n / 와드 n / 라인 ROLES[n % 5].
+        entry = saved.participants[2]
+        [row] = await custom_position_stats(session, entry.player_id, 5)
+
+        assert row.role == ROLES[2]
+        assert (row.games, row.wins) == (1, 1 if entry.win else 0)
+        assert (row.damage, row.damage_taken, row.gold) == (2000, 1600, 1000)
+        assert (row.cs, row.wards, row.seconds) == (102, 2, 1800)
+        assert (row.kills, row.deaths, row.assists) == (2, 1, 2)
+
+    async def test_first_blood_and_tower_are_counted(self, session):
+        saved = await self.recorded(session)
+        [head] = await custom_position_stats(session, saved.participants[0].player_id, 5)
+        [tower] = await custom_position_stats(session, saved.participants[1].player_id, 5)
+
+        assert (head.first_blood, head.first_tower) == (1, 0)
+        assert (tower.first_blood, tower.first_tower) == (0, 1)
+
+    async def test_positions_are_grouped_and_ordered_by_games(self, session):
+        first = await self.recorded(session)
+        player_id = first.participants[2].player_id
+
+        # 같은 참가자들로 두 번째 내전을 치르되 라인을 한 칸씩 옮긴다.
+        second = await named_match(session, server_id=5)
+        record = game_for(second)
+        moved = replace(
+            record,
+            participants=tuple(
+                replace(one, position=ROLES[(ROLES.index(one.position) + 1) % 5])
+                for one in record.participants
+            ),
+        )
+        await finish_match_with_records(session, second.id, moved)
+
+        # 세 번째 내전은 두 번째와 같은 라인이라 그 라인이 2경기가 된다.
+        third = await named_match(session, server_id=5)
+        await finish_match_with_records(
+            session,
+            third.id,
+            replace(
+                game_for(third),
+                participants=tuple(
+                    replace(one, position=ROLES[(ROLES.index(one.position) + 1) % 5])
+                    for one in game_for(third).participants
+                ),
+            ),
+        )
+
+        rows = await custom_position_stats(session, player_id, 5)
+        assert [(row.role, row.games) for row in rows] == [(ROLES[3], 2), (ROLES[2], 1)]
+
+    async def test_button_only_results_are_excluded(self, session):
+        """경기 시간이 없으면 분당 지표를 낼 수 없다."""
+        match = await staged_match(session, server_id=6)
+        await finish_match(session, match.id, "A")
+        player_id = match.participants[0].player_id
+
+        assert await custom_position_stats(session, player_id, 6) == []
+
+    async def test_other_servers_are_excluded(self, session):
+        saved = await self.recorded(session)
+        player_id = saved.participants[0].player_id
+        assert await custom_position_stats(session, player_id, 99) == []
 
 class TestSpectators:
     async def test_watching_needs_no_riot_account(self, session):

@@ -274,6 +274,49 @@ async def custom_stats(
         float(row.damage),
     )
 
+async def custom_position_stats(
+    session: AsyncSession, player_id: int, server_id: int
+) -> Sequence:
+    """사설 전적 파일로 기록된 내전의 라인별 합계. 많이 간 라인이 앞에 온다.
+
+    평균·분당 지표를 여기서 내지 않고 합계만 돌려주는 이유는, 표시할 때 여러 라인을
+    합친 '전체' 행도 같은 계산으로 만들기 위해서다.
+    """
+    position = func.coalesce(MatchPlayer.played_role, MatchPlayer.role).label("role")
+    result = await session.execute(
+        select(
+            position,
+            func.count().label("games"),
+            func.sum(case((MatchPlayer.win.is_(True), 1), else_=0)).label("wins"),
+            func.sum(MatchPlayer.kills).label("kills"),
+            func.sum(MatchPlayer.deaths).label("deaths"),
+            func.sum(MatchPlayer.assists).label("assists"),
+            func.sum(case((MatchPlayer.first_blood.is_(True), 1), else_=0)).label(
+                "first_blood"
+            ),
+            func.sum(case((MatchPlayer.first_tower.is_(True), 1), else_=0)).label(
+                "first_tower"
+            ),
+            func.sum(MatchPlayer.damage).label("damage"),
+            func.sum(MatchPlayer.damage_taken).label("damage_taken"),
+            func.sum(MatchPlayer.gold).label("gold"),
+            func.sum(MatchPlayer.cs).label("cs"),
+            func.sum(MatchPlayer.wards).label("wards"),
+            func.sum(Match.duration).label("seconds"),
+        )
+        .join(Match, Match.id == MatchPlayer.match_id)
+        .where(
+            Match.completed.is_(True),
+            Match.discord_server_id == server_id,
+            MatchPlayer.player_id == player_id,
+            # 경기 시간이 없는 기록(버튼으로만 확정한 내전)은 분당 지표를 낼 수 없다.
+            Match.duration.isnot(None),
+        )
+        .group_by(position)
+        .order_by(func.count().desc())
+    )
+    return result.all()
+
 async def finish_match(
     session: AsyncSession, match_id: int, winner: str
 ) -> Optional[Match]:
@@ -325,7 +368,14 @@ async def finish_match_with_records(
         entry.assists = record.assists
         entry.cs = record.cs
         entry.damage = record.damage
+        entry.damage_taken = record.damage_taken
         entry.gold = record.gold
+        entry.wards = record.wards
+        entry.first_blood = record.first_blood
+        entry.first_tower = record.first_tower
+        entry.played_role = record.position
+
+    match.duration = game.duration
 
     winner = "A" if a_won == {True} else "B"
     match.team_a_score = int(winner == "A")

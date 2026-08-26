@@ -4,12 +4,16 @@ import pytest
 
 from app.services.replay import ReplayError, find_game, load_games, riot_id_key
 
-def participant(participant_id, name, tag, team_id, win, **stats):
+def participant(
+    participant_id, name, tag, team_id, win, lane="MIDDLE", role="SOLO", **stats
+):
     """샘플 파일과 같은 구조로 참가자 한 명을 만든다."""
     base = {
         "kills": 0, "deaths": 0, "assists": 0,
         "totalMinionsKilled": 0, "neutralMinionsKilled": 0,
-        "totalDamageDealtToChampions": 0, "goldEarned": 0,
+        "totalDamageDealtToChampions": 0, "totalDamageTaken": 0,
+        "goldEarned": 0, "wardsPlaced": 0,
+        "firstBloodKill": False, "firstTowerKill": False,
     }
     base.update(stats)
     return (
@@ -27,6 +31,7 @@ def participant(participant_id, name, tag, team_id, win, **stats):
             "participantId": participant_id,
             "teamId": team_id,
             "stats": {"participantId": participant_id, "win": win, **base},
+            "timeline": {"participantId": participant_id, "lane": lane, "role": role},
         },
     )
 
@@ -35,6 +40,7 @@ def game(pairs, game_id=1, created_at=1000, aborted=False):
     return {
         "endOfGameResult": "Abort_TooFewPlayers" if aborted else "GameComplete",
         "gameCreation": created_at,
+        "gameDuration": 1800,
         "gameId": game_id,
         "gameType": "CUSTOM_GAME",
         "participantIdentities": list(identities),
@@ -99,3 +105,42 @@ def test_find_game_rejects_only_aborted_games():
 def test_find_game_rejects_broken_json():
     with pytest.raises(ReplayError, match="읽을 수 없습니다"):
         find_game("{not json", keys())
+
+def one_record(**kwargs):
+    """참가자 한 명짜리 경기를 만들어 그 기록을 돌려준다."""
+    [parsed] = load_games(game([participant(1, "겨 울", "chani", 100, True, **kwargs)]))
+    [record] = parsed.participants
+    return parsed, record
+
+def test_detailed_stats_are_read():
+    _, record = one_record(
+        totalDamageDealtToChampions=21249,
+        totalDamageTaken=18072,
+        goldEarned=12741,
+        wardsPlaced=13,
+        firstBloodKill=True,
+        firstTowerKill=False,
+    )
+
+    assert (record.damage, record.damage_taken, record.gold) == (21249, 18072, 12741)
+    assert record.wards == 13
+    assert (record.first_blood, record.first_tower) == (True, False)
+
+def test_game_duration_is_kept():
+    parsed, _ = one_record()
+    assert parsed.duration == 1800
+
+@pytest.mark.parametrize(
+    "lane, role, expected",
+    [
+        ("TOP", "SOLO", "TOP"),
+        ("JUNGLE", "NONE", "JUNGLE"),
+        ("MIDDLE", "SOLO", "MID"),
+        ("BOTTOM", "DUO_CARRY", "ADC"),
+        ("BOTTOM", "DUO_SUPPORT", "SUPPORT"),
+        ("NONE", "NONE", None),
+    ],
+)
+def test_position_comes_from_the_timeline(lane, role, expected):
+    _, record = one_record(lane=lane, role=role)
+    assert record.position == expected

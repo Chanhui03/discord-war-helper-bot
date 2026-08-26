@@ -17,6 +17,7 @@ EXTENSIONS = [
     "app.bot.commands.ping",
     "app.bot.commands.register",
     "app.bot.commands.profile",
+    "app.bot.commands.customs",
     "app.bot.commands.roles",
     "app.bot.commands.roster",
     "app.bot.commands.war",

@@ -90,7 +90,7 @@ class Register(commands.Cog):
 
         await interaction.followup.send(
             f"**{player.riot_game_name}#{player.riot_tagline}** 전적을 갱신했습니다."
-            "\n`/전적`으로 확인해주세요.",
+            "\n`/랭크전적`으로 확인해주세요.",
             ephemeral=True,
         )
 

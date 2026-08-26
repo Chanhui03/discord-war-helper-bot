@@ -17,7 +17,7 @@ class Profile(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="전적", description="저장된 전적과 라인별 지표를 봅니다.")
+    @app_commands.command(name="랭크전적", description="솔로랭크 전적과 라인별 지표를 봅니다.")
     @app_commands.guild_only()
     async def profile(self, interaction: discord.Interaction) -> None:
         async with session_factory() as session:

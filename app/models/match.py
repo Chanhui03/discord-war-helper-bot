@@ -21,6 +21,8 @@ class Match(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     discord_server_id: Mapped[int] = mapped_column(BigInteger, index=True)
     game_type: Mapped[str] = mapped_column(String(16), default="5v5")
+    # 사설 전적 파일로 확정한 내전만 채워진다. 분당 지표(DPM 등)의 분모다.
+    duration: Mapped[Optional[int]] = mapped_column(Integer)
     team_a_score: Mapped[int] = mapped_column(Integer, default=0)
     team_b_score: Mapped[int] = mapped_column(Integer, default=0)
     completed: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -57,7 +59,13 @@ class MatchPlayer(Base):
     assists: Mapped[Optional[int]] = mapped_column(Integer)
     cs: Mapped[Optional[int]] = mapped_column(Integer)
     damage: Mapped[Optional[int]] = mapped_column(Integer)
+    damage_taken: Mapped[Optional[int]] = mapped_column(Integer)
     gold: Mapped[Optional[int]] = mapped_column(Integer)
+    wards: Mapped[Optional[int]] = mapped_column(Integer)
+    first_blood: Mapped[Optional[bool]] = mapped_column(Boolean)
+    first_tower: Mapped[Optional[bool]] = mapped_column(Boolean)
+    # 실제로 간 라인. 배정(role)과 다를 수 있어 따로 남긴다.
+    played_role: Mapped[Optional[str]] = mapped_column(String(8))
 
     player: Mapped["Player"] = relationship(lazy="selectin")
 
