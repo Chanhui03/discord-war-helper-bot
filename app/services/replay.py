@@ -19,6 +19,9 @@ MAX_UNMATCHED = 2
 # 구 클라이언트 기록에는 teamPosition 이 없어 timeline 의 lane/role 로 라인을 읽는다.
 LANE_ROLES = {"TOP": "TOP", "JUNGLE": "JUNGLE", "MIDDLE": "MID"}
 
+# 서폿을 가리키는 role. 클라이언트 판마다 둘 중 하나로 온다.
+SUPPORT_ROLES = ("DUO_SUPPORT", "SUPPORT")
+
 class ReplayError(Exception):
     pass
 
@@ -59,7 +62,7 @@ def position_of(timeline: Dict[str, Any]) -> Optional[str]:
     """바텀은 원딜/서폿이 같은 라인이라 role 로 갈라야 한다."""
     lane = timeline.get("lane")
     if lane == "BOTTOM":
-        return "SUPPORT" if timeline.get("role") == "DUO_SUPPORT" else "ADC"
+        return "SUPPORT" if timeline.get("role") in SUPPORT_ROLES else "ADC"
     return LANE_ROLES.get(lane)
 
 def _participants(game: Dict[str, Any]) -> Tuple[ParticipantRecord, ...]:

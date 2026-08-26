@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -149,6 +150,7 @@ def test_game_duration_is_kept():
         ("MIDDLE", "SOLO", "MID"),
         ("BOTTOM", "DUO_CARRY", "ADC"),
         ("BOTTOM", "DUO_SUPPORT", "SUPPORT"),
+        ("BOTTOM", "SUPPORT", "SUPPORT"),
         ("NONE", "NONE", None),
     ],
 )
@@ -162,3 +164,43 @@ def test_a_player_can_be_found_by_their_alias():
     groups = [[riot_id_key("본계정", "KR1"), riot_id_key("부계정", "KR2")]]
 
     assert find_game(json.dumps(payload), groups).game_id == 1
+
+
+DATA = Path(__file__).parent / "data"
+
+
+def real_game(name):
+    """클라이언트에서 실제로 받은 내전 기록 한 판."""
+    [record] = load_games(json.loads((DATA / name).read_text(encoding="utf-8")))
+    return record
+
+
+def test_real_files_are_read_as_ten_player_customs():
+    first = real_game("first_custom_matches.json")
+    second = real_game("second_custom_matches.json")
+
+    assert (first.game_id, first.duration) == (8356188047, 2718)
+    assert (second.game_id, second.duration) == (8356275485, 1513)
+    assert len(first.participants) == len(second.participants) == 10
+
+
+def test_a_real_support_is_not_read_as_an_adc():
+    """이 클라이언트는 서폿 role 을 SUPPORT 로 준다 (DUO_SUPPORT 가 아니다)."""
+    positions = {
+        record.riot_id: record.position
+        for record in real_game("first_custom_matches.json").participants
+    }
+
+    assert positions[riot_id_key("fletid", "502")] == "SUPPORT"
+    assert positions[riot_id_key("MumuOfTFT", "KR0")] == "SUPPORT"
+
+
+def test_a_real_custom_game_puts_two_players_in_the_jungle():
+    """사설 게임은 탑 라이너가 정글로 온다. 되돌리는 건 기록할 때 배정 라인으로 한다."""
+    by_team = {}
+    for record in real_game("first_custom_matches.json").participants:
+        by_team.setdefault(record.team_id, []).append(record.position)
+
+    for positions in by_team.values():
+        assert positions.count("JUNGLE") == 2
+        assert "TOP" not in positions

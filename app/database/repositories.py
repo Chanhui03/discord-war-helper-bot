@@ -1,3 +1,4 @@
+from collections import Counter
 from typing import Dict, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, select
@@ -489,6 +490,13 @@ async def finish_match_with_records(
         return "mismatch", None
 
     winner = "A" if a_won == {True} else "B"
+    # 사설 게임은 클라이언트가 라인을 제대로 매기지 못해 탑 라이너가 정글로 온다.
+    # 한 팀에 같은 라인이 둘이면 그 라인은 믿을 수 없으니 배정한 라인을 쓴다.
+    duplicated = Counter(
+        (entry.team, record.position)
+        for entry, record in paired
+        if record and record.position
+    )
     for entry, record in paired:
         # 못 맞춘 참가자도 팀 승패는 남긴다. 개인 성적만 비워 둔다.
         entry.win = entry.team == winner
@@ -505,7 +513,11 @@ async def finish_match_with_records(
         entry.wards = record.wards
         entry.first_blood = record.first_blood
         entry.first_tower = record.first_tower
-        entry.played_role = record.position
+        entry.played_role = (
+            entry.role
+            if duplicated[(entry.team, record.position)] > 1
+            else record.position
+        )
 
     match.duration = game.duration
     match.team_a_score = int(winner == "A")

@@ -433,6 +433,42 @@ class TestRecordedResults:
         assert left_out.kills is None
         assert sum(entry.kills is not None for entry in saved.participants) == 9
 
+    async def test_duplicate_lanes_fall_back_to_the_assigned_role(self, session):
+        """사설 게임 기록은 탑 라이너를 정글로 준다. 겹친 라인만 배정으로 되돌린다."""
+        match = await named_match(session)
+        record = game_for(match)
+        broken = replace(
+            record,
+            participants=tuple(
+                replace(one, position="JUNGLE" if entry.role == "TOP" else entry.role)
+                for entry, one in zip(match.participants, record.participants)
+            ),
+        )
+
+        _, saved = await finish_match_with_records(session, match.id, broken)
+
+        # 탑·정글은 겹쳐서 배정 라인으로, 나머지는 파일 그대로.
+        assert all(entry.played_role == entry.role for entry in saved.participants)
+        assert sum(entry.played_role == "TOP" for entry in saved.participants) == 2
+
+    async def test_the_lane_played_can_differ_from_the_assigned_one(self, session):
+        """겹치지 않으면 파일에 적힌 라인을 그대로 남긴다."""
+        match = await named_match(session)
+        record = game_for(match)
+        swapped = {"MID": "ADC", "ADC": "MID"}
+        moved = replace(
+            record,
+            participants=tuple(
+                replace(one, position=swapped.get(entry.role, entry.role))
+                for entry, one in zip(match.participants, record.participants)
+            ),
+        )
+
+        _, saved = await finish_match_with_records(session, match.id, moved)
+
+        by_role = {entry.role: entry.played_role for entry in saved.participants}
+        assert (by_role["MID"], by_role["ADC"]) == ("ADC", "MID")
+
     async def test_winner_comes_from_the_file(self, session):
         match = await named_match(session)
         status, saved = await finish_match_with_records(
