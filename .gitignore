@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 war_helper.db
 .env.bak-*
+.claude/settings.local.json
