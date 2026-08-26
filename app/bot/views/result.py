@@ -2,7 +2,6 @@ import logging
 
 import discord
 
-from app.bot.messages import need_manage_guild
 from app.bot.views.rating import RatingView
 from app.database.repositories import custom_records, finish_match
 from app.database.session import session_factory
@@ -64,10 +63,6 @@ class ResultView(discord.ui.View):
             item.custom_id = f"result:{item.custom_id}:{match_id}"
 
     async def _finish(self, interaction: discord.Interaction, winner: str) -> None:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(need_manage_guild("결과 확정"), ephemeral=True)
-            return
-
         async with session_factory() as session:
             match = await finish_match(session, self.match_id, winner)
             if match is None:

@@ -2,7 +2,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from app.bot.messages import need_manage_guild
 from app.bot.views.lobby import LobbyView, lobby_embed
 from app.database.repositories import create_match, get_match, get_open_match
 from app.database.session import session_factory
@@ -13,7 +12,6 @@ class War(commands.Cog):
 
     @app_commands.command(name="내전", description="내전 참가자를 모집합니다.")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(manage_guild=True)
     async def war(self, interaction: discord.Interaction) -> None:
         async with session_factory() as session:
             existing = await get_open_match(session, interaction.guild_id)
@@ -29,14 +27,6 @@ class War(commands.Cog):
         await interaction.response.send_message(
             embed=lobby_embed(match), view=LobbyView(match.id)
         )
-
-    async def cog_app_command_error(
-        self, interaction: discord.Interaction, error: app_commands.AppCommandError
-    ) -> None:
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message(need_manage_guild("내전 생성"), ephemeral=True)
-            return
-        raise error
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(War(bot))

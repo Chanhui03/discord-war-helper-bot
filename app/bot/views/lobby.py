@@ -3,7 +3,7 @@ import logging
 
 import discord
 
-from app.bot.messages import NEED_REGISTER, need_manage_guild
+from app.bot.messages import NEED_REGISTER
 from app.database.repositories import (
     custom_records,
     delete_match,
@@ -237,10 +237,6 @@ class LobbyView(discord.ui.View):
 
     @discord.ui.button(label="팀 생성", style=discord.ButtonStyle.primary, disabled=True, custom_id="generate")
     async def generate(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(need_manage_guild("팀 생성"), ephemeral=True)
-            return
-
         async with session_factory() as session:
             match = await get_match(session, self.match_id)
             if match is None or len(match.participants) < LOBBY_SIZE:

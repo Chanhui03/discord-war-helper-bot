@@ -5,7 +5,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from app.bot.messages import need_manage_guild
 from app.bot.views.rating import RatingView
 from app.bot.views.result import ResultView, pending_embed, result_embed
 from app.database.repositories import (
@@ -34,7 +33,6 @@ class Result(commands.Cog):
     )
     @app_commands.rename(replay="전적파일")
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(manage_guild=True)
     async def result(
         self,
         interaction: discord.Interaction,
@@ -96,14 +94,6 @@ class Result(commands.Cog):
             by=interaction.user.id,
         )
         await interaction.followup.send(embed=embed, view=RatingView(saved.id))
-
-    async def cog_app_command_error(
-        self, interaction: discord.Interaction, error: app_commands.AppCommandError
-    ) -> None:
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message(need_manage_guild("결과 확정"), ephemeral=True)
-            return
-        raise error
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Result(bot))
