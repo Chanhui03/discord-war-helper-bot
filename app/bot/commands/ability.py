@@ -10,7 +10,7 @@ from app.database.repositories import (
     trait_scores,
 )
 from app.database.session import session_factory
-from app.traits import CHAMPS, SHOTCALL, summary
+from app.traits import CHAMPS, FOLLOW, MAIN_CALL, summary
 
 def status_embed(players, scores) -> discord.Embed:
     """평가가 적게 쌓인 사람부터 나열한다. 아직 아무도 안 매긴 사람이 맨 위로 온다."""
@@ -33,18 +33,23 @@ class Ability(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="능력평가", description="다른 사람의 오더능력과 챔피언폭을 1~10 으로 매깁니다.")
+    @app_commands.command(name="능력평가", description="다른 사람의 메인오더·오더수행·챔피언폭을 1~10 으로 매깁니다.")
     @app_commands.describe(
-        member="평가할 사람", shotcall="1~10 (팀 배정에서 상위 2명을 갈라 놓습니다)",
-        champs="1~10",
+        member="평가할 사람",
+        main_call="1~10 · 판을 읽고 콜을 내리는 능력 (상위 2명을 서로 다른 팀에 둡니다)",
+        follow="1~10 · 남의 콜에 맞춰 움직이는 능력 (점수에 그대로 더합니다)",
+        champs="1~10 · 저격밴을 맞아도 꺼낼 카드가 있는지",
     )
-    @app_commands.rename(member="대상", shotcall="오더능력", champs="챔피언폭")
+    @app_commands.rename(
+        member="대상", main_call="메인오더", follow="오더수행", champs="챔피언폭"
+    )
     @app_commands.guild_only()
     async def rate(
         self,
         interaction: discord.Interaction,
         member: discord.Member,
-        shotcall: app_commands.Range[int, 1, 10] = None,
+        main_call: app_commands.Range[int, 1, 10] = None,
+        follow: app_commands.Range[int, 1, 10] = None,
         champs: app_commands.Range[int, 1, 10] = None,
     ) -> None:
         if member.id == interaction.user.id:
@@ -52,9 +57,9 @@ class Ability(commands.Cog):
                 "자기 자신은 평가할 수 없습니다.", ephemeral=True
             )
             return
-        if shotcall is None and champs is None:
+        if main_call is None and follow is None and champs is None:
             await interaction.response.send_message(
-                "오더능력이나 챔피언폭 중 하나는 입력해주세요.", ephemeral=True
+                "메인오더·오더수행·챔피언폭 중 하나는 입력해주세요.", ephemeral=True
             )
             return
 
@@ -67,7 +72,9 @@ class Ability(commands.Cog):
                 )
                 return
 
-            for trait, score in ((SHOTCALL, shotcall), (CHAMPS, champs)):
+            for trait, score in (
+                (MAIN_CALL, main_call), (FOLLOW, follow), (CHAMPS, champs)
+            ):
                 if score is not None:
                     await save_trait(session, player.id, interaction.user.id, trait, score)
 
@@ -78,7 +85,7 @@ class Ability(commands.Cog):
         )
 
     @app_commands.command(
-        name="능력평가현황", description="등록한 사람들의 오더능력·챔피언폭을 한눈에 봅니다."
+        name="능력평가현황", description="등록한 사람들의 메인오더·오더수행·챔피언폭을 한눈에 봅니다."
     )
     @app_commands.guild_only()
     async def status(self, interaction: discord.Interaction) -> None:

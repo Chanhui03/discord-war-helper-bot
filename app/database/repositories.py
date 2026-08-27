@@ -4,7 +4,13 @@ from typing import Dict, Optional, Sequence, Tuple
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.match import Match, MatchPlayer, MatchRating, MatchSpectator
+from app.models.match import (
+    Match,
+    MatchCall,
+    MatchPlayer,
+    MatchRating,
+    MatchSpectator,
+)
 from app.models.player import Player, PlayerAlias, PlayerTrait
 from app.services.matchmaking import LOBBY_SIZE
 from app.services.replay import GameRecord, riot_id_key
@@ -526,6 +532,65 @@ async def finish_match_with_records(
     match.completed = True
 
     return winner, await _commit_and_reload(session, match)
+
+async def save_match_calls(session: AsyncSession, match_id: int, calls) -> int:
+    """음성 대본 채점 결과를 저장한다. 같은 내전을 다시 채점하면 덮어쓴다."""
+    existing = await session.execute(
+        select(MatchCall).where(MatchCall.match_id == match_id)
+    )
+    by_player = {row.player_id: row for row in existing.scalars()}
+
+    for call in calls:
+        row = by_player.get(call.player_id)
+        if row is None:
+            session.add(
+                MatchCall(
+                    match_id=match_id,
+                    player_id=call.player_id,
+                    main_call=call.main_call,
+                    confidence=call.confidence,
+                    evidence=call.evidence[:500],
+                )
+            )
+        else:
+            row.main_call = call.main_call
+            row.confidence = call.confidence
+            row.evidence = call.evidence[:500]
+
+    await session.commit()
+    return len(calls)
+
+async def call_averages(
+    session: AsyncSession, player_ids: Sequence[int], server_id: int
+) -> Dict[int, Tuple[float, int]]:
+    """플레이어별 (대본 메인오더 평균, 채점된 내전 수).
+
+    판마다 한 표씩 쌓이므로 평균이 판을 거듭할수록 안정된다. 대본 채점은 판별
+    편차가 커서 한 판만으로는 믿기 어렵다.
+    """
+    if not player_ids:
+        return {}
+
+    result = await session.execute(
+        select(
+            MatchCall.player_id,
+            func.avg(MatchCall.main_call).label("average"),
+            func.count().label("games"),
+        )
+        .join(Match, Match.id == MatchCall.match_id)
+        .where(*_finished_in(server_id), MatchCall.player_id.in_(player_ids))
+        .group_by(MatchCall.player_id)
+    )
+    return {row.player_id: (float(row.average), row.games) for row in result}
+
+async def match_calls(session: AsyncSession, match_id: int) -> Sequence:
+    """한 내전의 채점 결과. 근거 대사를 보여줄 때 쓴다."""
+    result = await session.execute(
+        select(MatchCall).where(MatchCall.match_id == match_id).order_by(
+            MatchCall.main_call.desc()
+        )
+    )
+    return result.scalars().all()
 
 async def last_assigned_roles(
     session: AsyncSession,

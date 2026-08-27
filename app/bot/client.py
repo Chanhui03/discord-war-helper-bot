@@ -25,6 +25,7 @@ EXTENSIONS = [
     "app.bot.commands.roster",
     "app.bot.commands.war",
     "app.bot.commands.result",
+    "app.bot.commands.callscore",
 ]
 
 class WarBot(commands.Bot):

@@ -1,15 +1,21 @@
 """서버 인원이 서로 매기는 주관 지표.
 
-랭크·KDA 로는 잡히지 않는 두 가지만 둔다. 표본이 적거나 내전 기록이 쌓이면
+랭크·KDA 로는 잡히지 않는 것만 둔다. 표본이 적거나 내전 기록이 쌓이면
 자동 지표에 자리를 넘기도록 scoring.trait_score 에서 힘을 줄인다.
+
+오더를 메인오더와 오더수행으로 나눈 이유는 둘의 성질이 다르기 때문이다.
+메인오더는 팀당 한 명이면 되는 배타적 자원이라 나눠 놓아야 하고, 오더수행은
+많을수록 좋은 가산 자원이라 점수에 그대로 더한다. 한 숫자로 묶으면 수행이
+좋은 사람까지 갈라 놓게 되고, 매기는 사람도 무엇을 넣어야 할지 모른다.
 """
 
 from app.services.scoring import TRAIT_MIN_VOTES
 
-SHOTCALL = "SHOTCALL"
+MAIN_CALL = "MAIN_CALL"
+FOLLOW = "FOLLOW"
 CHAMPS = "CHAMPS"
 
-TRAIT_LABELS = {SHOTCALL: "오더능력", CHAMPS: "챔피언폭"}
+TRAIT_LABELS = {MAIN_CALL: "메인오더", FOLLOW: "오더수행", CHAMPS: "챔피언폭"}
 
 # 아무도 평가하지 않았을 때 보여줄 중간값(1~10 척도).
 NEUTRAL_TRAIT = 5.5

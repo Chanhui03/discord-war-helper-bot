@@ -54,7 +54,10 @@ class PlayerProfile:
     role_scores: Dict[str, float]
     # 서버 인원이 매긴 주관 지표. 반영할 수 없으면 None.
     mastery: Optional[float] = None
-    shotcall: Optional[float] = None
+    # 메인오더. 팀당 한 명이면 되는 배타적 자원이라 점수에 더하지 않고 제약으로 쓴다.
+    main_call: Optional[float] = None
+    # 오더수행. 많을수록 좋은 가산 자원이라 점수에 그대로 더한다.
+    follow: Optional[float] = None
 
 @dataclass(frozen=True)
 class TeamPlan:
@@ -74,7 +77,7 @@ class BalanceResult:
     evaluated: int
     # 기피 라인 금지 제약을 지킨 결과인지. 지킬 수 있는 조합이 하나도 없으면 False.
     bans_honoured: bool
-    # 오더 상위 2명을 서로 다른 팀에 둘 수 있었는지.
+    # 메인오더 상위 2명을 서로 다른 팀에 둘 수 있었는지.
     leaders_split: bool = True
 
 def power_of(profile: PlayerProfile, role: str) -> float:
@@ -87,6 +90,7 @@ def power_of(profile: PlayerProfile, role: str) -> float:
             performance=profile.performance,
             custom=profile.custom,
             mastery=profile.mastery,
+            follow=profile.follow,
         ),
         role,
         profile.main_role,
@@ -94,15 +98,16 @@ def power_of(profile: PlayerProfile, role: str) -> float:
         profile.avoid_role,
     )
 
-def top_shotcallers(profiles: Sequence[PlayerProfile]) -> Tuple[int, ...]:
-    """오더 점수 상위 2명. 오더는 팀당 한 명이면 되는 자원이라 갈라 놓는다.
+def top_callers(profiles: Sequence[PlayerProfile]) -> Tuple[int, ...]:
+    """메인오더 상위 2명. 팀당 한 명이면 되는 자원이라 갈라 놓는다.
 
     점수를 더하는 방식으로 다루면 '오더 둘이 한 팀'이 최적해가 되어버린다.
+    오더수행(follow)은 반대로 많을수록 좋아서 여기 오지 않고 점수에 더해진다.
     """
-    rated = [profile for profile in profiles if profile.shotcall is not None]
+    rated = [profile for profile in profiles if profile.main_call is not None]
     if len(rated) < 2:
         return ()
-    ranked = sorted(rated, key=lambda profile: profile.shotcall, reverse=True)
+    ranked = sorted(rated, key=lambda profile: profile.main_call, reverse=True)
     return tuple(profile.player_id for profile in ranked[:2])
 
 def power_table(profiles: Sequence[PlayerProfile]) -> Dict[int, Dict[str, float]]:
@@ -203,7 +208,7 @@ def score_assignment(
     탐색을 하지 않으므로 splits / evaluated 는 0이다.
     """
     table = power_table(profiles)
-    leaders = set(top_shotcallers(profiles))
+    leaders = set(top_callers(profiles))
     teams: Dict[str, List[Tuple[PlayerProfile, str]]] = {"A": [], "B": []}
     for profile in profiles:
         team, role = assignment[profile.player_id]
@@ -238,18 +243,18 @@ def find_best_teams(
 ) -> BalanceResult:
     """제약을 지켜 탐색하고, 지킬 수 없으면 하나씩 풀어가며 다시 찾는다.
 
-    기피 라인 금지가 오더 분리보다 우선이다. 기피는 직전 내전에 대한 보상이라
+    기피 라인 금지가 메인오더 분리보다 우선이다. 기피는 직전 내전에 대한 보상이라
     약속에 가깝지만, 오더 분리는 재미를 위한 조정이기 때문이다.
     """
     if len(profiles) != LOBBY_SIZE:
         raise ValueError(f"참가자는 {LOBBY_SIZE}명이어야 합니다. (현재 {len(profiles)}명)")
 
-    leaders = top_shotcallers(profiles)
+    leaders = top_callers(profiles)
     rng = rng or random
     for respect_bans, split in ((True, leaders), (True, ()), (False, leaders)):
         result = _search(profiles, rng, respect_bans=respect_bans, leaders=split)
         if result is not None:
-            # 애초에 오더 평가가 없으면 분리 실패가 아니다.
+            # 애초에 메인오더 평가가 없으면 분리 실패가 아니다.
             return replace(result, leaders_split=not leaders or bool(split))
 
     # 제약을 모두 푼 탐색은 항상 답을 낸다.
@@ -281,7 +286,7 @@ def _search(
         team_a = [profiles[i] for i in a_index]
         team_b = [profiles[i] for i in b_index]
 
-        # 오더 두 명 중 정확히 한 명만 A팀이어야 갈라진 것이다.
+        # 메인오더 두 명 중 정확히 한 명만 A팀이어야 갈라진 것이다.
         if leaders and len({p.player_id for p in team_a} & set(leaders)) != 1:
             continue
 

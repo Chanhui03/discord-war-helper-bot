@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -57,10 +57,20 @@ class RiotClient:
             f"{self.PLATFORM_URL}/lol/league/v4/entries/by-puuid/{puuid}"
         )
 
-    async def get_match_ids(self, puuid: str, count: int) -> List[str]:
+    async def get_champion_masteries(self, puuid: str) -> List[Dict[str, Any]]:
         return await self._get(
-            f"{self.REGIONAL_URL}/lol/match/v5/matches/by-puuid/{puuid}/ids"
-            f"?start=0&count={count}"
+            f"{self.PLATFORM_URL}"
+            f"/lol/champion-mastery/v4/champion-masteries/by-puuid/{puuid}"
+        )
+
+    async def get_match_ids(
+        self, puuid: str, count: int, queue: Optional[int] = None
+    ) -> List[str]:
+        # queue 를 주면 그 큐만 받는다. 섞어 받으면 칼바람·일반이 라인/승률 집계를
+        # 오염시킨다.
+        query = f"?start=0&count={count}" + (f"&queue={queue}" if queue else "")
+        return await self._get(
+            f"{self.REGIONAL_URL}/lol/match/v5/matches/by-puuid/{puuid}/ids{query}"
         )
 
     async def get_match(self, match_id: str) -> Dict[str, Any]:

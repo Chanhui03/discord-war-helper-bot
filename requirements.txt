@@ -5,3 +5,4 @@ pydantic-settings==2.11.0
 SQLAlchemy[asyncio]==2.0.52
 aiosqlite==0.22.1
 alembic==1.16.5
+anthropic==0.125.0

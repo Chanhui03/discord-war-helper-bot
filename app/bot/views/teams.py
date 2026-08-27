@@ -5,6 +5,7 @@ import logging
 import discord
 
 from app.database.repositories import (
+    call_averages,
     custom_records,
     last_assigned_roles,
     swap_team_slots,
@@ -42,8 +43,8 @@ def teams_embed(match, result) -> discord.Embed:
         )
     if not result.leaders_split:
         embed.add_field(
-            name="⚠️ 오더 분리 미적용",
-            value="오더 상위 2명을 서로 다른 팀에 둘 수 없었습니다.",
+            name="⚠️ 메인오더 분리 미적용",
+            value="메인오더 상위 2명을 서로 다른 팀에 둘 수 없었습니다.",
             inline=False,
         )
 
@@ -69,12 +70,14 @@ async def match_profiles(session, match):
         session, player_ids, match.discord_server_id, exclude_match_id=match.id
     )
     traits = await trait_scores(session, player_ids)
+    calls = await call_averages(session, player_ids, match.discord_server_id)
     return [
         build_profile(
             entry.player,
             *records.get(entry.player_id, (0, 0)),
             last_role=previous.get(entry.player_id),
             traits=traits.get(entry.player_id),
+            recorded_call=calls.get(entry.player_id, (None, 0))[0],
         )
         for entry in match.participants
     ]

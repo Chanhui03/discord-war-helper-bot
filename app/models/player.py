@@ -95,6 +95,11 @@ class PlayerStats(Base):
     win_rate: Mapped[float] = mapped_column(Float, default=0.0)
     avg_kda: Mapped[float] = mapped_column(Float, default=0.0)
     recent_win_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    # 최근 폼을 집계한 경기 수. 0 이면 솔랭 표본이 없다는 뜻이라 최근 폼/KDA 를
+    # 점수에 쓰지 않는다.
+    recent_games: Mapped[int] = mapped_column(Integer, default=0)
+    # 챔피언 숙련도에서 계산한 챔피언폭(0~100). 조회할 수 없으면 비워 둔다.
+    champion_pool: Mapped[Optional[float]] = mapped_column(Float)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

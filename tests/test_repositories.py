@@ -4,6 +4,9 @@ from dataclasses import replace
 import pytest
 
 from app.database.repositories import (
+    call_averages,
+    match_calls,
+    save_match_calls,
     add_alias,
     aliases_for,
     create_match,
@@ -34,10 +37,11 @@ from app.database.repositories import (
     upsert_player,
 )
 from app.roles import ROLES
-from app.traits import CHAMPS, SHOTCALL
+from app.traits import CHAMPS, MAIN_CALL
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams
 from app.services.replay import GameRecord, ParticipantRecord, riot_id_key
-from app.services.stats import build_profile, refresh_player_stats
+from app.services.stats import SOLO_QUEUE_ID, build_profile, refresh_player_stats
+from app.services.transcript import PlayerCall
 
 pytestmark = pytest.mark.asyncio
 
@@ -49,9 +53,20 @@ async def register(session, discord_id, puuid, name="테스터"):
 class FakeRiot:
     """league / match 응답을 흉내내는 최소 구현."""
 
-    def __init__(self, tier="GOLD", division="II", lp=50, positions=("MIDDLE", "TOP")):
+    def __init__(
+        self,
+        tier="GOLD",
+        division="II",
+        lp=50,
+        positions=("MIDDLE", "TOP"),
+        masteries=(200_000, 120_000, 15_000),
+    ):
         self.tier, self.division, self.lp = tier, division, lp
         self.positions = positions
+        self.masteries = masteries
+
+    async def get_champion_masteries(self, puuid):
+        return [{"championPoints": points} for points in self.masteries]
 
     async def get_league_entries(self, puuid):
         return [{
@@ -59,7 +74,8 @@ class FakeRiot:
             "leaguePoints": self.lp, "wins": 60, "losses": 40,
         }]
 
-    async def get_match_ids(self, puuid, count):
+    async def get_match_ids(self, puuid, count, queue=None):
+        self.queue = queue
         return [f"KR_{i}" for i in range(len(self.positions))]
 
     async def get_match(self, match_id):
@@ -141,6 +157,110 @@ class TestRefreshPlayerStats:
 
         stored = await get_player(session, 1)
         assert stored.stats.tier == "PLATINUM"
+
+class TestSoloQueueOnly:
+    async def test_only_solo_queue_matches_are_requested(self, session):
+        """칼바람·일반이 섞이면 라인과 최근 폼 집계가 오염된다."""
+        player = await register(session, 1, "p-1")
+        riot = FakeRiot()
+        await refresh_player_stats(session, riot, player)
+
+        assert riot.queue == SOLO_QUEUE_ID
+
+    async def test_a_player_with_no_ranked_games_has_no_recent_form(self, session):
+        player = await register(session, 1, "p-1")
+        await refresh_player_stats(session, FakeRiot(positions=()), player)
+
+        stored = await get_player(session, 1)
+        assert stored.stats.recent_games == 0
+
+        # 표본이 없으면 0 이 아니라 '모름'이어야 가중치가 재분배된다.
+        built = build_profile(stored)
+        assert built.recent_form is None
+        assert built.performance is None
+
+    async def test_a_player_with_ranked_games_keeps_recent_form(self, session):
+        player = await register(session, 1, "p-1")
+        await refresh_player_stats(session, FakeRiot(), player)
+
+        built = build_profile(await get_player(session, 1))
+        assert built.recent_form is not None
+        assert built.performance is not None
+
+class TestMatchCalls:
+    def call(self, player_id, score, confidence=0.9):
+        return PlayerCall(
+            player_id=player_id, identified=True, confidence=confidence,
+            main_call=score, evidence=f"{player_id} 근거",
+        )
+
+    async def finished(self, session, server_id=1):
+        match = await staged_match(session, server_id)
+        return await finish_match(session, match.id, "A")
+
+    async def test_it_saves_and_averages(self, session):
+        match = await self.finished(session)
+        ids = [entry.player_id for entry in match.participants][:2]
+        await save_match_calls(session, match.id, [self.call(ids[0], 8)])
+
+        averages = await call_averages(session, ids, 1)
+        assert averages[ids[0]] == (8.0, 1)
+        assert ids[1] not in averages, "채점 안 된 사람이 집계에 들어갔다"
+
+    async def test_rescoring_overwrites_rather_than_duplicating(self, session):
+        match = await self.finished(session)
+        player_id = match.participants[0].player_id
+
+        await save_match_calls(session, match.id, [self.call(player_id, 8)])
+        await save_match_calls(session, match.id, [self.call(player_id, 4)])
+
+        assert (await call_averages(session, [player_id], 1))[player_id] == (4.0, 1)
+
+    async def test_it_accumulates_across_matches(self, session):
+        """판마다 한 표씩 쌓여야 한 판의 편차가 평균으로 눌린다."""
+        first = await self.finished(session)
+        player_id = first.participants[0].player_id
+        await save_match_calls(session, first.id, [self.call(player_id, 10)])
+
+        second = await create_second(session, [player_id], server_id=1)
+        second = await finish_match(session, second.id, "A")
+        await save_match_calls(session, second.id, [self.call(player_id, 4)])
+
+        assert (await call_averages(session, [player_id], 1))[player_id] == (7.0, 2)
+
+    async def test_unfinished_matches_are_not_counted(self, session):
+        match = await staged_match(session)
+        player_id = match.participants[0].player_id
+        await save_match_calls(session, match.id, [self.call(player_id, 9)])
+
+        assert await call_averages(session, [player_id], 1) == {}
+
+    async def test_other_servers_are_not_counted(self, session):
+        match = await self.finished(session, server_id=1)
+        player_id = match.participants[0].player_id
+        await save_match_calls(session, match.id, [self.call(player_id, 9)])
+
+        assert await call_averages(session, [player_id], 2) == {}
+
+    async def test_evidence_is_kept(self, session):
+        match = await self.finished(session)
+        player_id = match.participants[0].player_id
+        await save_match_calls(session, match.id, [self.call(player_id, 8)])
+
+        rows = await match_calls(session, match.id)
+        assert rows[0].evidence == f"{player_id} 근거"
+
+    async def test_it_feeds_the_balancing_profile(self, session):
+        match = await self.finished(session)
+        entry = match.participants[0]
+        await save_match_calls(session, match.id, [self.call(entry.player_id, 10)])
+
+        averages = await call_averages(session, [entry.player_id], 1)
+        built = build_profile(
+            entry.player, recorded_call=averages[entry.player_id][0]
+        )
+        assert built.main_call is not None
+        assert build_profile(entry.player).main_call is None
 
 class TestUpsertPlayer:
     async def test_reregistering_keeps_the_same_row(self, session):
@@ -666,10 +786,10 @@ class TestTraits:
     async def test_average_and_vote_count(self, session):
         target = await register(session, 1, "trait-target")
         for rater, score in ((10, 4), (11, 6), (12, 8)):
-            await save_trait(session, target.id, rater, SHOTCALL, score)
+            await save_trait(session, target.id, rater, MAIN_CALL, score)
 
         scores = await trait_scores(session, [target.id])
-        assert scores[target.id][SHOTCALL] == (6.0, 3)
+        assert scores[target.id][MAIN_CALL] == (6.0, 3)
 
     async def test_rerating_overwrites_instead_of_adding(self, session):
         target = await register(session, 1, "trait-target")
@@ -680,11 +800,11 @@ class TestTraits:
 
     async def test_traits_are_kept_apart(self, session):
         target = await register(session, 1, "trait-target")
-        await save_trait(session, target.id, 10, SHOTCALL, 2)
+        await save_trait(session, target.id, 10, MAIN_CALL, 2)
         await save_trait(session, target.id, 10, CHAMPS, 10)
 
         scores = (await trait_scores(session, [target.id]))[target.id]
-        assert (scores[SHOTCALL][0], scores[CHAMPS][0]) == (2.0, 10.0)
+        assert (scores[MAIN_CALL][0], scores[CHAMPS][0]) == (2.0, 10.0)
 
     async def test_unrated_players_are_absent(self, session):
         target = await register(session, 1, "trait-target")

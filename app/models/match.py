@@ -5,6 +5,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -82,6 +83,27 @@ class MatchSpectator(Base):
         ForeignKey("matches.id", ondelete="CASCADE"), index=True
     )
     discord_id: Mapped[int] = mapped_column(BigInteger)
+
+class MatchCall(Base):
+    """음성 대본에서 뽑은 메인오더 점수. 한 내전에 한 사람당 한 행.
+
+    동료평가와 달리 판마다 새로 쌓인다. 근거 대사를 함께 남겨, 나중에 점수가
+    이상하면 무엇을 보고 그렇게 매겼는지 확인할 수 있게 한다.
+    """
+
+    __tablename__ = "match_calls"
+    __table_args__ = (
+        UniqueConstraint("match_id", "player_id", name="uq_match_calls_match_player"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    match_id: Mapped[int] = mapped_column(
+        ForeignKey("matches.id", ondelete="CASCADE"), index=True
+    )
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
+    main_call: Mapped[int] = mapped_column(Integer)
+    confidence: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[str] = mapped_column(String(500), default="")
 
 class MatchRating(Base):
     """경기 후 남긴 평점. MVP 는 이 평균에서 나온다.

@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[2]
 class Settings(BaseSettings):
     discord_token: str
     riot_api_key: str
+    # 음성 대본 채점에만 쓴다. 비워두면 /오더채점 만 동작하지 않는다.
+    anthropic_api_key: str = ""
     database_url: str = f"sqlite+aiosqlite:///{ROOT / 'war_helper.db'}"
     # 쉼표로 여러 서버를 적을 수 있다. 비우면 전역 등록.
     # NoDecode 가 없으면 pydantic 이 "1,2" 를 JSON 으로 파싱하려다 실패한다.
