@@ -17,8 +17,8 @@ CHAMPS = "CHAMPS"
 
 TRAIT_LABELS = {MAIN_CALL: "메인오더", FOLLOW: "오더수행", CHAMPS: "챔피언폭"}
 
-# 아무도 평가하지 않았을 때 보여줄 중간값(1~10 척도).
-NEUTRAL_TRAIT = 5.5
+# 아무도 평가하지 않았을 때 보여줄 기본값. 1 이 기본이고 위로만 올라간다.
+NEUTRAL_TRAIT = 1.0
 
 def summary(scores) -> str:
     """평가 값 한 줄. 인원이 모자라면 아직 반영되지 않는다고 알린다."""

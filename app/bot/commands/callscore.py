@@ -14,9 +14,10 @@ from discord.ext import commands
 from app.config.settings import settings
 from app.database.repositories import (
     get_match,
-    match_calls,
+    review_agreement,
+    match_reviews,
     recently_completed,
-    save_match_calls,
+    save_match_reviews,
 )
 from app.database.session import session_factory
 from app.log import event
@@ -38,7 +39,7 @@ def report_embed(match, calls, entries) -> discord.Embed:
     """채점 결과. 근거 대사를 함께 보여준다."""
     by_id = {entry.player_id: entry for entry in entries}
     embed = discord.Embed(
-        title=f"내전 #{match.id} 메인오더 채점",
+        title=f"내전 #{match.id} 판별 평가",
         description=(
             f"**{len(calls)}명** 채점됨"
             if calls
@@ -51,7 +52,10 @@ def report_embed(match, calls, entries) -> discord.Embed:
         if entry is None:
             continue
         embed.add_field(
-            name=f"{entry.player.riot_game_name} — {call.main_call}점",
+            name=(
+                f"{entry.team}팀 {call.rank}위 · {entry.player.riot_game_name} "
+                f"— 메인오더 {call.main_call}"
+            ),
             value=f"-# {call.evidence}",
             inline=False,
         )
@@ -64,7 +68,7 @@ def report_embed(match, calls, entries) -> discord.Embed:
             + "\n-# 목소리를 특정하지 못해 이번 판은 건너뜁니다.",
             inline=False,
         )
-    embed.set_footer(text="대본은 누가 지시했는지는 보지만 그 콜이 좋았는지는 못 봅니다.")
+    embed.set_footer(text="순위는 팀 안에서만 비교합니다. MVP 투표와 대조해 정확도를 잽니다.")
     return embed
 
 class CallScore(commands.Cog):
@@ -72,7 +76,7 @@ class CallScore(commands.Cog):
         self.bot = bot
 
     @app_commands.command(
-        name="오더채점", description="내전 음성 대본으로 메인오더를 채점합니다."
+        name="오더채점", description="내전 음성 대본과 전적으로 판별 평가를 매깁니다."
     )
     @app_commands.describe(
         team_a="A팀 음성 대본 (.txt)",
@@ -131,8 +135,11 @@ class CallScore(commands.Cog):
             return
 
         async with session_factory() as session:
-            await save_match_calls(session, match.id, calls)
-            stored = await match_calls(session, match.id)
+            await save_match_reviews(session, match.id, calls)
+            stored = await match_reviews(session, match.id)
+            # AI 순위가 사람 판단과 맞는지. 디스코드에는 안 띄우고 로그로만 남긴다.
+            # 나중에 AI 가중치를 정할 때 볼 유일한 근거라 계산은 계속 한다.
+            hits, total = await review_agreement(session, match.discord_server_id)
 
         event(
             log,
@@ -141,6 +148,14 @@ class CallScore(commands.Cog):
             scored=len(calls),
             of=len(entries),
             by=interaction.user.id,
+        )
+        event(
+            log,
+            "review_agreement",
+            hits=hits,
+            of=total,
+            rate=f"{hits / total:.0%}" if total else "n/a",
+            chance="20%",
         )
         await interaction.followup.send(embed=report_embed(match, stored, entries))
 

@@ -4,9 +4,14 @@ from dataclasses import replace
 import pytest
 
 from app.database.repositories import (
+    pick_vote_mvp,
+    save_vote,
+    vote_by,
+    vote_counts,
+    voted_mvp,
     call_averages,
-    match_calls,
-    save_match_calls,
+    match_reviews,
+    save_match_reviews,
     add_alias,
     aliases_for,
     create_match,
@@ -22,12 +27,9 @@ from app.database.repositories import (
     join_match,
     last_assigned_roles,
     leave_match,
-    match_ratings,
     mvp_counts,
     pick_mvp,
-    ratings_by_rater,
     remove_alias,
-    save_rating,
     save_trait,
     swap_team_slots,
     trait_scores,
@@ -201,7 +203,7 @@ class TestMatchCalls:
     async def test_it_saves_and_averages(self, session):
         match = await self.finished(session)
         ids = [entry.player_id for entry in match.participants][:2]
-        await save_match_calls(session, match.id, [self.call(ids[0], 8)])
+        await save_match_reviews(session, match.id, [self.call(ids[0], 8)])
 
         averages = await call_averages(session, ids, 1)
         assert averages[ids[0]] == (8.0, 1)
@@ -211,8 +213,8 @@ class TestMatchCalls:
         match = await self.finished(session)
         player_id = match.participants[0].player_id
 
-        await save_match_calls(session, match.id, [self.call(player_id, 8)])
-        await save_match_calls(session, match.id, [self.call(player_id, 4)])
+        await save_match_reviews(session, match.id, [self.call(player_id, 8)])
+        await save_match_reviews(session, match.id, [self.call(player_id, 4)])
 
         assert (await call_averages(session, [player_id], 1))[player_id] == (4.0, 1)
 
@@ -220,40 +222,40 @@ class TestMatchCalls:
         """판마다 한 표씩 쌓여야 한 판의 편차가 평균으로 눌린다."""
         first = await self.finished(session)
         player_id = first.participants[0].player_id
-        await save_match_calls(session, first.id, [self.call(player_id, 10)])
+        await save_match_reviews(session, first.id, [self.call(player_id, 10)])
 
         second = await create_second(session, [player_id], server_id=1)
         second = await finish_match(session, second.id, "A")
-        await save_match_calls(session, second.id, [self.call(player_id, 4)])
+        await save_match_reviews(session, second.id, [self.call(player_id, 4)])
 
         assert (await call_averages(session, [player_id], 1))[player_id] == (7.0, 2)
 
     async def test_unfinished_matches_are_not_counted(self, session):
         match = await staged_match(session)
         player_id = match.participants[0].player_id
-        await save_match_calls(session, match.id, [self.call(player_id, 9)])
+        await save_match_reviews(session, match.id, [self.call(player_id, 9)])
 
         assert await call_averages(session, [player_id], 1) == {}
 
     async def test_other_servers_are_not_counted(self, session):
         match = await self.finished(session, server_id=1)
         player_id = match.participants[0].player_id
-        await save_match_calls(session, match.id, [self.call(player_id, 9)])
+        await save_match_reviews(session, match.id, [self.call(player_id, 9)])
 
         assert await call_averages(session, [player_id], 2) == {}
 
     async def test_evidence_is_kept(self, session):
         match = await self.finished(session)
         player_id = match.participants[0].player_id
-        await save_match_calls(session, match.id, [self.call(player_id, 8)])
+        await save_match_reviews(session, match.id, [self.call(player_id, 8)])
 
-        rows = await match_calls(session, match.id)
+        rows = await match_reviews(session, match.id)
         assert rows[0].evidence == f"{player_id} 근거"
 
     async def test_it_feeds_the_balancing_profile(self, session):
         match = await self.finished(session)
         entry = match.participants[0]
-        await save_match_calls(session, match.id, [self.call(entry.player_id, 10)])
+        await save_match_reviews(session, match.id, [self.call(entry.player_id, 10)])
 
         averages = await call_averages(session, [entry.player_id], 1)
         built = build_profile(
@@ -862,64 +864,76 @@ class TestSpectators:
         player = await register(session, 4244, "still-room")
         assert (await join_match(session, match.id, player.id))[0] == "joined"
 
-class TestRatings:
-    async def test_rating_is_stored_and_averaged(self, session):
+class TestMvpVotes:
+    async def finished(self, session):
         match = await named_match(session)
-        await finish_match_with_records(session, match.id, game_for(match))
-        [c] = [e.player_id for e in match.participants[2:3]]
+        _, saved = await finish_match_with_records(session, match.id, game_for(match))
+        return saved
 
-        await save_rating(session, match.id, 2000, target_id=c, score=9)
-        await save_rating(session, match.id, 2001, target_id=c, score=8)
+    def winners(self, match):
+        return [e.player_id for e in match.participants if e.win]
 
-        assert (await match_ratings(session, match.id))[c] == (8.5, 2)
+    async def test_a_vote_is_stored(self, session):
+        match = await self.finished(session)
+        target = self.winners(match)[0]
 
-    async def test_rerating_overwrites_instead_of_adding(self, session):
-        match = await named_match(session)
-        b = match.participants[1].player_id
+        await save_vote(session, match.id, 2000, target)
+        counts, _ = await vote_counts(session, match.id)
+        assert counts == {target: 1}
 
-        await save_rating(session, match.id, 2000, b, 1)
-        await save_rating(session, match.id, 2000, b, 10)
+    async def test_one_vote_per_person_moves_instead_of_adding(self, session):
+        """한 사람은 한 판에 한 표. 다시 고르면 옮겨진다."""
+        match = await self.finished(session)
+        first, second = self.winners(match)[:2]
 
-        assert (await match_ratings(session, match.id))[b] == (10.0, 1)
+        await save_vote(session, match.id, 2000, first)
+        await save_vote(session, match.id, 2000, second)
 
-    async def test_ratings_by_rater_shows_only_my_scores(self, session):
-        match = await named_match(session)
-        b = match.participants[1].player_id
+        counts, _ = await vote_counts(session, match.id)
+        assert counts == {second: 1}
+        assert await vote_by(session, match.id, 2000) == second
 
-        await save_rating(session, match.id, 2000, b, 3)
-        await save_rating(session, match.id, 2002, b, 9)
-
-        assert await ratings_by_rater(session, match.id, 2000) == {b: 3}
-
-    async def test_spectators_can_rate(self, session):
-        """관전자는 player 행이 없어도 평가자가 될 수 있다."""
+    async def test_spectators_can_vote(self, session):
+        # 관전 등록은 로비 단계에서만 된다. 끝난 내전에는 못 들어간다.
         match = await named_match(session)
         await watch_match(session, match.id, 8888)
-        b = match.participants[1].player_id
+        _, match = await finish_match_with_records(session, match.id, game_for(match))
+        target = self.winners(match)[0]
 
-        await save_rating(session, match.id, 8888, b, 7)
-        assert (await match_ratings(session, match.id))[b] == (7.0, 1)
+        await save_vote(session, match.id, 8888, target)
+        counts, by_spectator = await vote_counts(session, match.id)
+        assert counts == {target: 1}
+        assert by_spectator == {target: 1}, "관전자 표가 따로 세어지지 않았다"
 
-    async def test_mvp_is_the_highest_average(self, session):
-        match = await named_match(session)
-        [b, c] = [e.player_id for e in match.participants[1:3]]
+    async def test_no_votes_means_no_mvp(self):
+        assert pick_vote_mvp({}) is None
 
-        await save_rating(session, match.id, 2000, b, 6)
-        await save_rating(session, match.id, 2000, c, 9)
+    async def test_clear_winner(self):
+        assert pick_vote_mvp({1: 3, 2: 1}) == 1
 
-        assert pick_mvp(await match_ratings(session, match.id)) == c
+    async def test_spectators_break_the_tie(self):
+        assert pick_vote_mvp({1: 2, 2: 2}, {2: 1}) == 2
 
-    async def test_ties_are_broken_by_vote_count(self):
-        assert pick_mvp({1: (8.0, 3), 2: (8.0, 5)}) == 2
+    async def test_an_unresolved_tie_gives_no_mvp(self):
+        """임의로 하나를 고르면 AI 검증의 정답지가 오염된다."""
+        assert pick_vote_mvp({1: 2, 2: 2}) is None
+        assert pick_vote_mvp({1: 2, 2: 2}, {1: 1, 2: 1}) is None
 
-    async def test_no_ratings_means_no_mvp(self):
-        assert pick_mvp({}) is None
+    async def test_most_votes_wins(self, session):
+        match = await self.finished(session)
+        first, second = self.winners(match)[:2]
+
+        await save_vote(session, match.id, 2000, first)
+        await save_vote(session, match.id, 2001, first)
+        await save_vote(session, match.id, 2002, second)
+
+        assert await voted_mvp(session, match.id) == first
 
 class TestMvpCounts:
     async def test_counts_only_completed_matches(self, session):
         match = await named_match(session)
         [a, b] = [e.player_id for e in match.participants[:2]]
-        await save_rating(session, match.id, 2000, b, 10)
+        await save_vote(session, match.id, 2000, b)
 
         assert await mvp_counts(session, [a, b], 5) == {a: 0, b: 0}
 
@@ -929,7 +943,7 @@ class TestMvpCounts:
     async def test_scoped_to_one_server(self, session):
         match = await named_match(session)
         [a, b] = [e.player_id for e in match.participants[:2]]
-        await save_rating(session, match.id, 2000, b, 10)
+        await save_vote(session, match.id, 2000, b)
         await finish_match_with_records(session, match.id, game_for(match))
 
         assert await mvp_counts(session, [a, b], 99) == {a: 0, b: 0}

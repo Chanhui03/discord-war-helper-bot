@@ -16,7 +16,6 @@ from app.services.scoring import (
     POOL_FULL,
     POOL_MIN_POINTS,
     POOL_SEASON_GAMES,
-    POOL_UNVERIFIED,
     TRAIT_FADE_GAMES,
     TRAIT_MIN_VOTES,
     champion_pool_score,
@@ -36,10 +35,16 @@ class TestTraitScore:
         assert trait_score(10.0, TRAIT_MIN_VOTES - 1, 0) is None
         assert trait_score(10.0, TRAIT_MIN_VOTES, 0) is not None
 
-    def test_scale_runs_from_zero_to_a_hundred(self):
-        assert trait_score(1.0, 3, 0) == pytest.approx(0.0)
-        assert trait_score(5.5, 3, 0) == pytest.approx(50.0)
+    def test_one_is_the_baseline_not_the_worst(self):
+        """매기는 사람이 '기본 1점, 잘하면 더'로 쓴다. 1 을 0 으로 읽으면
+        기본값을 준 사람이 최하점이 된다."""
+        assert trait_score(1.0, 3, 0) == pytest.approx(NEUTRAL)
         assert trait_score(10.0, 3, 0) == pytest.approx(100.0)
+
+    def test_it_only_ever_adds(self):
+        scores = [trait_score(n, 3, 0) for n in range(1, 11)]
+        assert scores == sorted(scores)
+        assert min(scores) == pytest.approx(NEUTRAL), "평가가 감점으로 작용했다"
 
     def test_it_fades_as_custom_games_pile_up(self):
         full = trait_score(10.0, 3, 0)
@@ -60,15 +65,16 @@ class TestChampionPoolScore:
         assert pool([1_200, 700]) is None
         assert pool([POOL_MIN_POINTS, POOL_MIN_POINTS]) is not None
 
-    def test_one_trick_scores_zero(self):
+    def test_a_one_trick_gets_no_bonus_but_no_penalty(self):
         # 주력 대비 절반에 못 미치는 챔피언은 저격밴을 맞으면 대신 못 꺼낸다.
-        assert pool([500_000, 20_000, 15_000]) == 0.0
+        # 그래도 깎지는 않는다. 가산 전용이다.
+        assert pool([500_000, 20_000, 15_000]) == pytest.approx(NEUTRAL)
 
     def test_score_rises_with_each_comparable_champion(self):
         one = pool([100_000])
         two = pool([100_000, 60_000])
         three = pool([100_000, 60_000, 55_000])
-        assert one == 0.0 < two < three < 100.0
+        assert one == pytest.approx(NEUTRAL) and NEUTRAL < two < three < 100.0
 
     def test_full_marks_at_the_saturation_point(self):
         wide = [100_000] * POOL_FULL
@@ -83,7 +89,14 @@ class TestChampionPoolScore:
 
     def test_an_overwhelming_main_hides_a_deep_second(self):
         """알려진 한계: 비율로만 보면 800k/300k 가 원트릭으로 잡힌다."""
-        assert pool([800_000, 300_000]) == 0.0
+        assert pool([800_000, 300_000]) == pytest.approx(NEUTRAL)
+
+    def test_it_never_drops_below_neutral(self):
+        """가산 전용이라 어떤 구성도 감점이 되지 않는다."""
+        구성 = ([500_000, 20_000], [100_000], [100_000] * 4, [12_000, 11_000])
+        for points in 구성:
+            for games in (0, 10, POOL_SEASON_GAMES, 200):
+                assert pool(points, games) >= NEUTRAL
 
 class TestSeasonConfidence:
     wide = [100_000] * POOL_FULL
@@ -98,7 +111,7 @@ class TestSeasonConfidence:
         verified = pool(self.wide, POOL_SEASON_GAMES)
         unverified = pool(self.wide, 0)
         assert unverified < verified
-        assert unverified == pytest.approx(70.0)  # 40 + (100-40) * 0.5
+        assert unverified == pytest.approx(75.0)  # 50 + 50 * 0.5
 
     def test_it_ramps_up_with_games_played(self):
         scores = [pool(self.wide, games) for games in (0, 10, 20, 30, 40)]
@@ -109,18 +122,15 @@ class TestSeasonConfidence:
         just_under = pool(self.wide, POOL_SEASON_GAMES - 1)
         assert abs(just_under - 100.0) < 1.0
 
-    def test_a_narrow_pool_is_not_dragged_to_zero(self):
-        """요소가 하나뿐인 base_score 에서 최하점으로 굳지 않아야 한다."""
-        assert pool(self.narrow, 0) == pytest.approx(20.0)  # 40 + (0-40) * 0.5
-        assert pool(self.narrow, 0) > pool(self.narrow, POOL_SEASON_GAMES)
+    def test_a_narrow_pool_is_neutral_regardless_of_games(self):
+        """깎을 것이 없으므로 솔랭 판수와 무관하게 중립이다."""
+        assert pool(self.narrow, 0) == pytest.approx(NEUTRAL)
+        assert pool(self.narrow, POOL_SEASON_GAMES) == pytest.approx(NEUTRAL)
 
-    def test_everything_converges_toward_the_unverified_value(self):
-        spread = abs(pool(self.wide, 0) - pool(self.narrow, 0))
-        verified = abs(
-            pool(self.wide, POOL_SEASON_GAMES) - pool(self.narrow, POOL_SEASON_GAMES)
-        )
-        assert spread == pytest.approx(verified / 2)
-        assert POOL_UNVERIFIED < NEUTRAL
+    def test_a_thin_season_halves_the_bonus(self):
+        thin = pool(self.wide, 0) - NEUTRAL
+        full = pool(self.wide, POOL_SEASON_GAMES) - NEUTRAL
+        assert thin == pytest.approx(full / 2)
 
 class TestMasteryScore:
     def test_no_data_at_all(self):
@@ -128,8 +138,8 @@ class TestMasteryScore:
 
     def test_it_averages_the_two_sources(self):
         blended = mastery_score(100.0, 1.0, TRAIT_MIN_VOTES, 0)
-        # 계정 숙련도 100 과 동료평가 1점(=0) 의 평균
-        assert blended == pytest.approx(50.0)
+        # 계정 숙련도 100 과 동료평가 기본값 1점(=50) 의 평균
+        assert blended == pytest.approx(75.0)
 
     def test_one_source_alone_is_used_as_is(self):
         only_pool = mastery_score(80.0, None, 0, 0)
@@ -140,7 +150,7 @@ class TestMasteryScore:
     def test_a_missing_source_is_not_filled_with_neutral(self):
         """없는 쪽을 중립으로 메우면 값이 실제보다 평평해진다."""
         assert mastery_score(100.0, None, 0, 0) == pytest.approx(100.0)
-        assert mastery_score(100.0, 5.5, TRAIT_MIN_VOTES, 0) == pytest.approx(75.0)
+        assert mastery_score(100.0, 1.0, TRAIT_MIN_VOTES, 0) == pytest.approx(75.0)
 
     def test_votes_below_the_threshold_leave_only_the_account(self):
         assert mastery_score(80.0, 10.0, TRAIT_MIN_VOTES - 1, 0) == pytest.approx(80.0)
@@ -236,11 +246,11 @@ class TestDisplay:
         line = summary({MAIN_CALL: (7.5, TRAIT_MIN_VOTES), CHAMPS: (4.0, 0)})
 
         assert f"메인오더 **7.5** ({TRAIT_MIN_VOTES}명)" in line
-        assert f"오더수행 **5.5** (0/{TRAIT_MIN_VOTES}명)" in line
+        assert f"오더수행 **1.0** (0/{TRAIT_MIN_VOTES}명)" in line
         assert f"챔피언폭 **4.0** (0/{TRAIT_MIN_VOTES}명)" in line
 
     def test_unrated_players_show_the_middle_value(self):
-        assert "메인오더 **5.5** (0/" in summary({})
+        assert "메인오더 **1.0** (0/" in summary({})
 
     def test_trait_field_counts_down_the_remaining_games(self):
         from types import SimpleNamespace
@@ -275,7 +285,7 @@ class TestStatusEmbed:
         lines = embed.description.split("\n")
 
         assert lines[0].startswith("1. <@1001>")
-        assert "메인오더 **5.5** (0/" in lines[0]
+        assert "메인오더 **1.0** (0/" in lines[0]
 
     def test_long_list_is_truncated(self):
         embed = status_embed([self.player(i) for i in range(LIST_LIMIT + 2)], {})

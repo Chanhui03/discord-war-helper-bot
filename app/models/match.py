@@ -84,14 +84,17 @@ class MatchSpectator(Base):
     )
     discord_id: Mapped[int] = mapped_column(BigInteger)
 
-class MatchCall(Base):
-    """음성 대본에서 뽑은 메인오더 점수. 한 내전에 한 사람당 한 행.
+class MatchReview(Base):
+    """대본과 전적을 함께 읽은 판별 평가. 한 내전에 한 사람당 한 행.
 
-    동료평가와 달리 판마다 새로 쌓인다. 근거 대사를 함께 남겨, 나중에 점수가
-    이상하면 무엇을 보고 그렇게 매겼는지 확인할 수 있게 한다.
+    절대 점수가 아니라 팀 안에서의 순위(1~5)를 받는다. '7점'은 판마다 기준이
+    흔들리지만 '5명 중 2등'은 그 판 안에서만 비교하므로 드리프트가 없다.
+    누적할 때도 평균 순위가 평균 점수보다 안정적이다.
+
+    근거를 함께 남겨, 점수가 이상할 때 무엇을 보고 그렇게 매겼는지 확인한다.
     """
 
-    __tablename__ = "match_calls"
+    __tablename__ = "match_reviews"
     __table_args__ = (
         UniqueConstraint("match_id", "player_id", name="uq_match_calls_match_player"),
     )
@@ -101,9 +104,32 @@ class MatchCall(Base):
         ForeignKey("matches.id", ondelete="CASCADE"), index=True
     )
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
+    # 자기 팀 5명 안에서의 순위. 1 등이 그 팀에서 제일 잘한 사람.
+    rank: Mapped[Optional[int]] = mapped_column(Integer)
     main_call: Mapped[int] = mapped_column(Integer)
     confidence: Mapped[float] = mapped_column(Float)
     evidence: Mapped[str] = mapped_column(String(500), default="")
+
+class MatchVote(Base):
+    """MVP 직접 투표. 이긴 팀과 관전자가 한 명씩 고른다.
+
+    9명에게 1~10 을 매기던 방식은 아무도 끝까지 하지 않아 표가 비었다.
+    한 번 누르면 끝나는 쪽이 실제로 모인다. 이 표는 밸런싱에 쓰지 않고,
+    AI 가 매긴 순위가 사람 판단과 맞는지 확인하는 정답지로 쓴다.
+    """
+
+    __tablename__ = "match_votes"
+    __table_args__ = (
+        UniqueConstraint("match_id", "voter_discord_id", name="uq_match_votes_voter"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    match_id: Mapped[int] = mapped_column(
+        ForeignKey("matches.id", ondelete="CASCADE"), index=True
+    )
+    # 관전자도 던지므로 Discord 사용자로 둔다.
+    voter_discord_id: Mapped[int] = mapped_column(BigInteger)
+    target_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
 
 class MatchRating(Base):
     """경기 후 남긴 평점. MVP 는 이 평균에서 나온다.

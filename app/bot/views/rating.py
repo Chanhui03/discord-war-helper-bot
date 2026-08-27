@@ -1,6 +1,11 @@
-"""경기 후 평점. 평균이 가장 높은 사람이 MVP 가 된다.
+"""경기 후 MVP 투표.
 
-참가자와 관전자 모두 평가할 수 있어 평가자를 Discord 사용자로 다룬다.
+이긴 팀과 관전자가 한 명씩 고른다. 9명에게 1~10 을 매기던 방식은 아무도 끝까지
+하지 않아 표가 비었다(실제로 한 판에 3~7명만 참여했다). 한 번 누르면 끝나는
+쪽이 실제로 모인다.
+
+이 표는 밸런싱에 쓰지 않는다. AI 가 대본과 전적을 읽고 매긴 순위가 사람 판단과
+맞는지 확인하는 정답지로 쓴다.
 """
 
 import discord
@@ -8,168 +13,120 @@ import discord
 from app.bot.views.persistent import PersistentView
 from app.database.repositories import (
     get_match,
-    match_ratings,
-    pick_mvp,
-    ratings_by_rater,
-    save_rating,
+    pick_vote_mvp,
+    save_vote,
+    vote_by,
+    vote_counts,
 )
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
 
-SCORES = list(range(1, 11))
-# Discord 버튼은 한 줄에 5개까지다. 0번 줄은 대상 선택이 쓴다.
-BUTTONS_PER_ROW = 5
+NOT_ALLOWED = "이긴 팀과 관전자만 MVP 를 뽑을 수 있습니다."
+NO_WINNER = "아직 결과가 확정되지 않았습니다."
 
-NOT_INVOLVED = "이 내전의 참가자나 관전자만 평점을 남길 수 있습니다."
+def winners(match):
+    return [entry for entry in match.participants if entry.win]
 
-def mvp_line(match, ratings) -> str:
-    """MVP 한 줄. 평점이 하나도 없으면 안내 문구."""
-    winner = pick_mvp(ratings)
+def can_vote(match, discord_id: int) -> bool:
+    """이긴 팀 또는 관전자. 진 팀에게는 주지 않는다.
+
+    진 직후의 표는 감정이 섞이거나 기권이 많아 정답지로 쓰기 어렵다.
+    """
+    return any(e.player.discord_id == discord_id for e in winners(match)) or any(
+        viewer.discord_id == discord_id for viewer in match.spectators
+    )
+
+def mvp_line(match, counts, spectator_counts) -> str:
+    winner = pick_vote_mvp(counts, spectator_counts)
     if winner is None:
-        return "아직 평점이 없습니다."
+        return "아직 표가 갈리지 않았습니다." if counts else "아직 표가 없습니다."
 
     entry = next(e for e in match.participants if e.player_id == winner)
-    average, votes = ratings[winner]
     return (
         f"🏆 <@{entry.player.discord_id}> "
-        f"`{ROLE_LABELS[entry.role]}` — 평점 **{average:.2f}** ({votes}표)"
+        f"`{ROLE_LABELS[entry.role]}` — {counts[winner]}표"
     )
 
-def rating_embed(match, ratings) -> discord.Embed:
+def vote_embed(match, counts, spectator_counts) -> discord.Embed:
     embed = discord.Embed(
-        title=f"내전 #{match.id} 평점",
-        description=mvp_line(match, ratings),
+        title=f"내전 #{match.id} MVP",
+        description=mvp_line(match, counts, spectator_counts),
         colour=discord.Colour.gold(),
     )
-    for team in ("A", "B"):
-        lines = []
+    lines = [
+        f"`{ROLE_LABELS[entry.role]:<2}` <@{entry.player.discord_id}> "
+        f"— {counts.get(entry.player_id, 0)}표"
         for entry in sorted(
-            (e for e in match.participants if e.team == team),
-            key=lambda e: -ratings.get(e.player_id, (0.0, 0))[0],
-        ):
-            average, votes = ratings.get(entry.player_id, (0.0, 0))
-            score = f"**{average:.2f}** ({votes}표)" if votes else "미평가"
-            lines.append(f"`{ROLE_LABELS[entry.role]:<2}` <@{entry.player.discord_id}> {score}")
-        embed.add_field(name=f"{team}팀", value="\n".join(lines))
+            winners(match), key=lambda e: -counts.get(e.player_id, 0)
+        )
+    ]
+    embed.add_field(name="승리 팀", value="\n".join(lines) or "없음")
+    embed.set_footer(text=f"총 {sum(counts.values())}표 · 동점이면 관전자 표로 가릅니다")
     return embed
 
-def targets(match, rater_discord_id: int):
-    """평가 대상. 본인은 뺀다. 관전자는 10명 전부를 평가한다."""
-    return [
-        entry
-        for entry in match.participants
-        if entry.player.discord_id != rater_discord_id
-    ]
+class MvpSelect(discord.ui.Select):
+    """이긴 팀 중 한 명. 본인은 뺀다."""
 
-class TargetSelect(discord.ui.Select):
-    """평가할 사람을 고른다. 이미 준 점수는 설명에 보여준다."""
-
-    def __init__(self, match, rater_discord_id: int, given) -> None:
+    def __init__(self, match, voter_discord_id: int, given) -> None:
         options = [
             discord.SelectOption(
                 label=f"{ROLE_LABELS[entry.role]} · {entry.player.riot_game_name}",
                 value=str(entry.player_id),
-                description=(
-                    f"{given[entry.player_id]}점 매김"
-                    if entry.player_id in given
-                    else f"{entry.team}팀 · 아직 안 매김"
-                ),
+                default=given == entry.player_id,
             )
-            for entry in targets(match, rater_discord_id)
+            for entry in winners(match)
+            if entry.player.discord_id != voter_discord_id
         ]
-        super().__init__(placeholder="평가할 사람", options=options, row=0)
+        super().__init__(placeholder="이번 판 MVP", options=options)
+        self.match_id = match.id
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        self.view.target_id = int(self.values[0])
-        await interaction.response.edit_message(view=self.view)
-
-class ScoreButton(discord.ui.Button):
-    def __init__(self, score: int) -> None:
-        super().__init__(
-            label=str(score),
-            style=discord.ButtonStyle.primary,
-            row=1 + (score - 1) // BUTTONS_PER_ROW,
-        )
-        self.score = score
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        view: "RatingPanel" = self.view
-        if view.target_id is None:
-            await interaction.response.send_message(
-                "먼저 평가할 사람을 골라주세요.", ephemeral=True
-            )
-            return
+        target_id = int(self.values[0])
 
         async with session_factory() as session:
-            await save_rating(
-                session,
-                view.match_id,
-                view.rater_discord_id,
-                view.target_id,
-                self.score,
-            )
-            match = await get_match(session, view.match_id)
-            given = await ratings_by_rater(
-                session, view.match_id, view.rater_discord_id
-            )
+            await save_vote(session, self.match_id, interaction.user.id, target_id)
+            match = await get_match(session, self.match_id)
+            counts, by_spectator = await vote_counts(session, self.match_id)
 
-        view.target_id = None
-        view.clear_items()
-        view.build(match, given)
-        await interaction.response.edit_message(content=view.summary(match, given), view=view)
-
-class RatingPanel(discord.ui.View):
-    """평가자 한 명에게만 보이는 임시 창. 여러 명을 이어서 매길 수 있다."""
-
-    def __init__(self, match, rater_discord_id: int, given) -> None:
-        super().__init__(timeout=600)
-        self.match_id = match.id
-        self.rater_discord_id = rater_discord_id
-        self.target_id = None
-        self.build(match, given)
-
-    def build(self, match, given) -> None:
-        self.add_item(TargetSelect(match, self.rater_discord_id, given))
-        for score in SCORES:
-            self.add_item(ScoreButton(score))
-
-    def summary(self, match, given) -> str:
-        total = len(targets(match, self.rater_discord_id))
-        return f"평가할 사람을 고르고 점수를 누르세요. **{len(given)} / {total}명** 완료"
+        await interaction.response.edit_message(
+            content=f"<@{target_id}> 에게 투표했습니다. 다시 고르면 바뀝니다.",
+            embed=vote_embed(match, counts, by_spectator),
+            view=None,
+        )
 
 class RatingView(PersistentView):
     """결과 메시지에 붙는 영속 버튼."""
 
     PREFIX = "rating"
 
-    @discord.ui.button(label="평점 남기기", style=discord.ButtonStyle.primary, custom_id="rate")
+    @discord.ui.button(label="MVP 뽑기", style=discord.ButtonStyle.primary, custom_id="rate")
     async def rate(self, interaction: discord.Interaction, button: discord.ui.Button):
         async with session_factory() as session:
             match = await get_match(session, self.match_id)
-            # 관전자는 Riot 계정이 없으므로 Discord 사용자로만 확인한다.
-            involved = any(
-                entry.player.discord_id == interaction.user.id
-                for entry in match.participants
-            ) or any(
-                viewer.discord_id == interaction.user.id for viewer in match.spectators
-            )
-            if not involved:
-                await interaction.response.send_message(NOT_INVOLVED, ephemeral=True)
+            if not match.completed:
+                await interaction.response.send_message(NO_WINNER, ephemeral=True)
+                return
+            if not can_vote(match, interaction.user.id):
+                await interaction.response.send_message(NOT_ALLOWED, ephemeral=True)
                 return
 
-            given = await ratings_by_rater(session, self.match_id, interaction.user.id)
+            mine = await vote_by(session, self.match_id, interaction.user.id)
 
-        panel = RatingPanel(match, interaction.user.id, given)
-        await interaction.response.send_message(
-            panel.summary(match, given), view=panel, ephemeral=True
+        view = discord.ui.View(timeout=600)
+        view.add_item(MvpSelect(match, interaction.user.id, mine))
+        note = (
+            "이번 판에서 제일 잘한 사람을 골라주세요."
+            if mine is None
+            else f"지금 <@{mine}> 에게 투표했습니다. 바꾸려면 다시 고르세요."
         )
+        await interaction.response.send_message(note, view=view, ephemeral=True)
 
     @discord.ui.button(label="결과 보기", style=discord.ButtonStyle.secondary, custom_id="show")
     async def show(self, interaction: discord.Interaction, button: discord.ui.Button):
         async with session_factory() as session:
             match = await get_match(session, self.match_id)
-            ratings = await match_ratings(session, self.match_id)
+            counts, by_spectator = await vote_counts(session, self.match_id)
 
         await interaction.response.send_message(
-            embed=rating_embed(match, ratings), ephemeral=True
+            embed=vote_embed(match, counts, by_spectator), ephemeral=True
         )

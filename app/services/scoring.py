@@ -56,11 +56,8 @@ POOL_FULL = 4
 # 챔피언폭을 온전히 인정할 시즌 솔랭 판수. 이보다 적으면 숙련도가 지금 실력을
 # 얼마나 반영하는지 확인할 길이 없다.
 POOL_SEASON_GAMES = 40
-# 표본이 모자랄 때 수축시킬 목표값. 중립(50)보다 낮게 잡아, 솔랭을 거의 안 한
-# 사람의 넓은 숙련도가 실제로 검증된 폭과 같은 대우를 받지 않게 한다.
-POOL_UNVERIFIED = 40.0
-# 표본이 없어도 숙련도의 이만큼은 인정한다. 0 으로 두면 폭이 좁은 사람이
-# 요소 하나뿐인 base_score 에서 최하점으로 굳는다.
+# 표본이 없어도 가산분의 이만큼은 인정한다. 0 으로 두면 솔랭을 안 하는 사람은
+# 폭이 아무리 넓어도 한 푼도 못 받는다.
 POOL_MIN_CONFIDENCE = 0.5
 
 def tier_score(tier: Optional[str], division: Optional[str], lp: int) -> Optional[float]:
@@ -93,11 +90,16 @@ def performance_score(avg_kda: float) -> float:
     return min(avg_kda / 5.0, 1.0) * 100
 
 def from_ten(average: Optional[float]) -> Optional[float]:
-    """1~10 척도를 0~100 으로 편다."""
+    """1~10 평가를 0~100 으로 편다. 1 이 기본값이고 위로만 올라가는 가산점이다.
+
+    매기는 사람이 '기본 1점, 잘하면 더 준다'로 쓰고 있어 그 뜻에 맞춘다.
+    1 을 0 으로 읽으면 기본값을 준 사람이 최하점 처리되어, 평가를 안 받은
+    사람보다 크게 불리해진다.
+    """
     if average is None:
         return None
 
-    return NEUTRAL + (average - 5.5) / 4.5 * NEUTRAL
+    return NEUTRAL + (average - 1.0) / 9.0 * NEUTRAL
 
 def trait_value(average: Optional[float], votes: int) -> Optional[float]:
     """동료평가 1~10 평균을 0~100 으로. 표가 모자라면 None."""
@@ -140,9 +142,12 @@ def champion_pool_score(
     1~2챔프를 저격밴하므로, 폭의 실질적인 의미는 주력이 잘렸을 때 대신 꺼낼 카드가
     몇 장 있느냐다. 비율로 보면 총 플레이량이 적은 사람도 불리해지지 않는다.
 
+    동료평가와 마찬가지로 가산 전용이다. 폭이 좁다고 깎지 않고, 넓으면 더 준다.
+    원트릭은 중립(50)이고 4챔프 이상이 만점이다.
+
     숙련도는 커리어 누적이라 지금도 그 폭이 유효한지는 알 수 없다. 그래서 시즌
-    솔랭 판수가 POOL_SEASON_GAMES 에 못 미치면 POOL_UNVERIFIED 쪽으로 수축시켜,
-    솔랭으로 확인된 폭보다 낮게 준다.
+    솔랭 판수가 POOL_SEASON_GAMES 에 못 미치면 가산분을 깎아, 솔랭으로 확인된
+    폭보다 적게 준다.
     """
     played = [value for value in points if value >= POOL_MIN_POINTS]
     if not played:
@@ -150,10 +155,9 @@ def champion_pool_score(
 
     best = max(played)
     pool = sum(1 for value in played if value >= best * POOL_RATIO)
-    raw = min((pool - 1) / (POOL_FULL - 1), 1.0) * 100
+    bonus = min((pool - 1) / (POOL_FULL - 1), 1.0) * NEUTRAL
 
-    confidence = season_confidence(season_games)
-    return POOL_UNVERIFIED + (raw - POOL_UNVERIFIED) * confidence
+    return NEUTRAL + bonus * season_confidence(season_games)
 
 def blend(values: Sequence[Optional[float]], custom_games: int) -> Optional[float]:
     """서로 다른 출처의 0~100 값을 평균내고 판수만큼 힘을 줄인다.

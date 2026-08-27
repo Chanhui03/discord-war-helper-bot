@@ -6,10 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.match import (
     Match,
-    MatchCall,
     MatchPlayer,
     MatchRating,
+    MatchReview,
     MatchSpectator,
+    MatchVote,
 )
 from app.models.player import Player, PlayerAlias, PlayerTrait
 from app.services.matchmaking import LOBBY_SIZE
@@ -533,10 +534,10 @@ async def finish_match_with_records(
 
     return winner, await _commit_and_reload(session, match)
 
-async def save_match_calls(session: AsyncSession, match_id: int, calls) -> int:
-    """음성 대본 채점 결과를 저장한다. 같은 내전을 다시 채점하면 덮어쓴다."""
+async def save_match_reviews(session: AsyncSession, match_id: int, calls) -> int:
+    """판별 평가를 저장한다. 같은 내전을 다시 채점하면 덮어쓴다."""
     existing = await session.execute(
-        select(MatchCall).where(MatchCall.match_id == match_id)
+        select(MatchReview).where(MatchReview.match_id == match_id)
     )
     by_player = {row.player_id: row for row in existing.scalars()}
 
@@ -544,15 +545,17 @@ async def save_match_calls(session: AsyncSession, match_id: int, calls) -> int:
         row = by_player.get(call.player_id)
         if row is None:
             session.add(
-                MatchCall(
+                MatchReview(
                     match_id=match_id,
                     player_id=call.player_id,
+                    rank=call.rank,
                     main_call=call.main_call,
                     confidence=call.confidence,
                     evidence=call.evidence[:500],
                 )
             )
         else:
+            row.rank = call.rank
             row.main_call = call.main_call
             row.confidence = call.confidence
             row.evidence = call.evidence[:500]
@@ -573,24 +576,142 @@ async def call_averages(
 
     result = await session.execute(
         select(
-            MatchCall.player_id,
-            func.avg(MatchCall.main_call).label("average"),
+            MatchReview.player_id,
+            func.avg(MatchReview.main_call).label("average"),
             func.count().label("games"),
         )
-        .join(Match, Match.id == MatchCall.match_id)
-        .where(*_finished_in(server_id), MatchCall.player_id.in_(player_ids))
-        .group_by(MatchCall.player_id)
+        .join(Match, Match.id == MatchReview.match_id)
+        .where(*_finished_in(server_id), MatchReview.player_id.in_(player_ids))
+        .group_by(MatchReview.player_id)
     )
     return {row.player_id: (float(row.average), row.games) for row in result}
 
-async def match_calls(session: AsyncSession, match_id: int) -> Sequence:
-    """한 내전의 채점 결과. 근거 대사를 보여줄 때 쓴다."""
+async def match_reviews(session: AsyncSession, match_id: int) -> Sequence:
+    """한 내전의 평가 결과. 근거를 보여줄 때 쓴다. 팀별 순위 순으로 나온다."""
     result = await session.execute(
-        select(MatchCall).where(MatchCall.match_id == match_id).order_by(
-            MatchCall.main_call.desc()
-        )
+        select(MatchReview)
+        .where(MatchReview.match_id == match_id)
+        .order_by(MatchReview.rank)
     )
     return result.scalars().all()
+
+async def save_vote(
+    session: AsyncSession, match_id: int, voter_discord_id: int, target_id: int
+) -> None:
+    """MVP 표를 던진다. 한 사람은 한 판에 한 표라 다시 던지면 옮겨진다."""
+    result = await session.execute(
+        select(MatchVote).where(
+            MatchVote.match_id == match_id,
+            MatchVote.voter_discord_id == voter_discord_id,
+        )
+    )
+    vote = result.scalar_one_or_none()
+
+    if vote is None:
+        session.add(
+            MatchVote(
+                match_id=match_id,
+                voter_discord_id=voter_discord_id,
+                target_id=target_id,
+            )
+        )
+    else:
+        vote.target_id = target_id
+
+    await session.commit()
+
+async def vote_by(
+    session: AsyncSession, match_id: int, voter_discord_id: int
+) -> Optional[int]:
+    """이 사람이 이 판에 던진 표. 고른 사람을 다시 열 때 표시한다."""
+    result = await session.execute(
+        select(MatchVote.target_id).where(
+            MatchVote.match_id == match_id,
+            MatchVote.voter_discord_id == voter_discord_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+async def vote_counts(
+    session: AsyncSession, match_id: int
+) -> Tuple[Dict[int, int], Dict[int, int]]:
+    """(전체 득표, 관전자 득표). 동점일 때 관전자 표로 가른다."""
+    result = await session.execute(
+        select(MatchVote).where(MatchVote.match_id == match_id)
+    )
+    votes = result.scalars().all()
+
+    watching = await session.execute(
+        select(MatchSpectator.discord_id).where(MatchSpectator.match_id == match_id)
+    )
+    spectators = set(watching.scalars())
+
+    total: Dict[int, int] = {}
+    by_spectator: Dict[int, int] = {}
+    for vote in votes:
+        total[vote.target_id] = total.get(vote.target_id, 0) + 1
+        if vote.voter_discord_id in spectators:
+            by_spectator[vote.target_id] = by_spectator.get(vote.target_id, 0) + 1
+    return total, by_spectator
+
+def pick_vote_mvp(
+    counts: Dict[int, int], spectator_counts: Optional[Dict[int, int]] = None
+) -> Optional[int]:
+    """최다 득표자. 동점이면 관전자 표로 가르고, 그래도 안 갈리면 None.
+
+    임의로 하나를 고르면 AI 검증의 정답지가 오염된다. 못 가린 판은 집계에서 뺀다.
+    """
+    if not counts:
+        return None
+
+    best = max(counts.values())
+    tied = [player_id for player_id, votes in counts.items() if votes == best]
+    if len(tied) == 1:
+        return tied[0]
+
+    spectators = spectator_counts or {}
+    top = max(spectators.get(player_id, 0) for player_id in tied)
+    narrowed = [p for p in tied if spectators.get(p, 0) == top]
+    return narrowed[0] if len(narrowed) == 1 else None
+
+async def voted_mvp(session: AsyncSession, match_id: int) -> Optional[int]:
+    total, by_spectator = await vote_counts(session, match_id)
+    return pick_vote_mvp(total, by_spectator)
+
+async def review_agreement(
+    session: AsyncSession, server_id: int
+) -> Tuple[int, int]:
+    """AI 가 이긴 팀 1등으로 꼽은 사람과 MVP 투표가 맞은 (횟수, 판수).
+
+    AI 순위를 믿어도 되는지 재는 유일한 잣대다. 이긴 팀 5명 중 하나이므로
+    찍으면 20%. 그보다 확실히 높아야 대본과 전적에서 실력을 읽고 있다는 뜻이다.
+    """
+    result = await session.execute(
+        select(Match.id).where(*_finished_in(server_id)).order_by(Match.id)
+    )
+    hits = total = 0
+    for match_id in result.scalars():
+        mvp = await voted_mvp(session, match_id)
+        if mvp is None:
+            continue
+
+        top = await session.execute(
+            select(MatchReview.player_id)
+            .join(MatchPlayer, MatchPlayer.player_id == MatchReview.player_id)
+            .where(
+                MatchReview.match_id == match_id,
+                MatchReview.rank == 1,
+                MatchPlayer.match_id == match_id,
+                MatchPlayer.win.is_(True),
+            )
+        )
+        predicted = top.scalars().first()
+        if predicted is None:
+            continue
+
+        total += 1
+        hits += int(predicted == mvp)
+    return hits, total
 
 async def last_assigned_roles(
     session: AsyncSession,
@@ -620,66 +741,12 @@ async def last_assigned_roles(
         latest.setdefault(player_id, role)
     return latest
 
-async def save_rating(
-    session: AsyncSession,
-    match_id: int,
-    rater_discord_id: int,
-    target_id: int,
-    score: int,
-) -> None:
-    """평점을 남긴다. 같은 대상에 다시 매기면 덮어쓴다."""
-    result = await session.execute(
-        select(MatchRating).where(
-            MatchRating.match_id == match_id,
-            MatchRating.rater_discord_id == rater_discord_id,
-            MatchRating.target_id == target_id,
-        )
-    )
-    rating = result.scalar_one_or_none()
-
-    if rating is None:
-        session.add(
-            MatchRating(
-                match_id=match_id,
-                rater_discord_id=rater_discord_id,
-                target_id=target_id,
-                score=score,
-            )
-        )
-    else:
-        rating.score = score
-
-    await session.commit()
-
-async def ratings_by_rater(
-    session: AsyncSession, match_id: int, rater_discord_id: int
-) -> Dict[int, int]:
-    """한 사람이 이 내전에서 남긴 평점. 평점 창에 이미 매긴 값을 표시하는 데 쓴다."""
-    result = await session.execute(
-        select(MatchRating.target_id, MatchRating.score).where(
-            MatchRating.match_id == match_id,
-            MatchRating.rater_discord_id == rater_discord_id,
-        )
-    )
-    return {row.target_id: row.score for row in result}
-
-async def match_ratings(
-    session: AsyncSession, match_id: int
-) -> Dict[int, Tuple[float, int]]:
-    """이 내전에서 플레이어별 (평균 평점, 받은 표 수)."""
-    result = await session.execute(
-        select(
-            MatchRating.target_id,
-            func.avg(MatchRating.score).label("average"),
-            func.count().label("votes"),
-        )
-        .where(MatchRating.match_id == match_id)
-        .group_by(MatchRating.target_id)
-    )
-    return {row.target_id: (float(row.average), row.votes) for row in result}
-
 def pick_mvp(ratings: Dict[int, Tuple[float, int]]) -> Optional[int]:
-    """평균이 가장 높은 플레이어. 동점이면 표를 더 많이 받은 쪽이 이긴다."""
+    """옛 평점 방식의 MVP. 평균이 높고, 동점이면 표가 많은 쪽.
+
+    9명에게 1~10 을 매기던 시절에 쌓인 내전을 계속 세기 위해 남겨둔다.
+    새 내전은 pick_vote_mvp 를 쓴다.
+    """
     if not ratings:
         return None
     return max(ratings, key=lambda player_id: ratings[player_id])
@@ -689,8 +756,8 @@ async def mvp_counts(
 ) -> Dict[int, int]:
     """해당 서버에서 각자 MVP 를 몇 번 했는지.
 
-    custom_records 와 같은 이유로 컬럼에 저장하지 않는다. 평점은 결과 확정 뒤에도
-    계속 들어올 수 있어서, 저장해 두면 최신 평점과 어긋난다.
+    custom_records 와 같은 이유로 컬럼에 저장하지 않는다. 표는 결과 확정 뒤에도
+    계속 들어올 수 있어서, 저장해 두면 최신 결과와 어긋난다.
     """
     if not player_ids:
         return {}
@@ -712,8 +779,22 @@ async def mvp_counts(
         per_match.setdefault(match_id, {})[target_id] = (float(average), votes)
 
     counts = {player_id: 0 for player_id in player_ids}
-    for ratings in per_match.values():
-        winner = pick_mvp(ratings)
+    for match_id, ratings in per_match.items():
+        # 투표가 있으면 그쪽이 우선이다. 옛 평점만 있는 내전은 그대로 살린다.
+        winner = await voted_mvp(session, match_id) or pick_mvp(ratings)
+        if winner in counts:
+            counts[winner] += 1
+
+    voted = await session.execute(
+        select(MatchVote.match_id)
+        .join(Match, Match.id == MatchVote.match_id)
+        .where(*_finished_in(server_id))
+        .group_by(MatchVote.match_id)
+    )
+    for match_id in voted.scalars():
+        if match_id in per_match:
+            continue  # 위에서 이미 셌다
+        winner = await voted_mvp(session, match_id)
         if winner in counts:
             counts[winner] += 1
     return counts
