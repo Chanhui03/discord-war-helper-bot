@@ -5,3 +5,4 @@ __pycache__/
 war_helper.db
 .env.bak-*
 .claude/settings.local.json
+.DS_Store
