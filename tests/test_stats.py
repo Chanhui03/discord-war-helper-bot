@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.services.scoring import TAKEOVER_GAMES
 from app.services.stats import (
     MATCH_CONCURRENCY,
     STATS_TTL,
@@ -11,7 +12,7 @@ from app.services.stats import (
     is_fresh,
     kda,
     pick_solo_entry,
-    player_score,
+    profile_score,
 )
 
 PUUID = "me"
@@ -101,20 +102,39 @@ class TestAggregateMatches:
         assert roles["TOP"]["win_rate"] == 1.0
         assert 0 <= roles["MID"]["role_score"] <= 100
 
-class TestPlayerScore:
+class TestProfileScore:
+    def profile(self, **kwargs):
+        from tests.test_matchmaking import profile
+
+        return profile(1, **kwargs)
+
     def test_unranked_player_still_gets_a_score(self):
-        score = player_score(None, None, 0, 0.5, 2.5)
+        score = profile_score(self.profile(tier=None))
         assert 0 < score < 100
 
     def test_higher_tier_scores_higher(self):
-        low = player_score("SILVER", "IV", 0, 0.5, 2.5)
-        high = player_score("DIAMOND", "I", 0, 0.5, 2.5)
+        low = profile_score(self.profile(tier=20.0))
+        high = profile_score(self.profile(tier=90.0))
         assert high > low
 
-    def test_main_role_score_is_included(self):
-        without = player_score("GOLD", "II", 50, 0.5, 2.5)
-        with_bad_role = player_score("GOLD", "II", 50, 0.5, 2.5, main_role_score=0.0)
-        assert with_bad_role < without
+    def test_it_matches_what_balancing_uses(self):
+        """화면에 뜬 점수와 팀을 가르는 점수가 같아야 한다."""
+        from app.services.matchmaking import power_of
+
+        built = self.profile(tier=70.0, main="MID")
+        assert profile_score(built) == pytest.approx(power_of(built, "MID"))
+
+    def test_custom_records_move_the_displayed_score(self):
+        """예전에는 표시 점수가 내전 전적을 아예 빼고 계산했다."""
+        without = profile_score(self.profile(tier=60.0))
+        with_customs = profile_score(self.profile(tier=60.0, custom=100.0))
+        assert with_customs > without
+
+    def test_internal_rank_takes_over_after_enough_games(self):
+        built = self.profile(tier=95.0, custom=50.0, internal=10.0)
+        early = profile_score(built, custom_games=0)
+        late = profile_score(built, custom_games=TAKEOVER_GAMES)
+        assert late < early, "내전 판수가 쌓여도 솔랭 티어가 그대로 남았다"
 
 class TestFetchMatches:
     def test_preserves_order_and_caps_concurrency(self):

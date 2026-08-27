@@ -45,6 +45,8 @@ class PlayerProfile:
     recent_form: Optional[float]
     performance: Optional[float]
     custom: Optional[float]
+    # 내전 판별 평가의 평균 순위. 밸런서가 지우지 못하는 내전 신호다.
+    internal: Optional[float]
     win_rate: float
     main_role: Optional[str]
     secondary_role: Optional[str]
@@ -52,6 +54,8 @@ class PlayerProfile:
     # 직전 내전에서 기피 라인을 갔다면 이번에는 기피 라인 배정을 금지한다.
     must_avoid: bool
     role_scores: Dict[str, float]
+    # 솔랭 지표가 내전 지표에 자리를 넘긴 정도(0~1). 내전 판수에서 온다.
+    takeover: float = 0.0
     # 서버 인원이 매긴 주관 지표. 반영할 수 없으면 None.
     mastery: Optional[float] = None
     # 메인오더. 팀당 한 명이면 되는 배타적 자원이라 점수에 더하지 않고 제약으로 쓴다.
@@ -89,8 +93,10 @@ def power_of(profile: PlayerProfile, role: str) -> float:
             recent_form=profile.recent_form,
             performance=profile.performance,
             custom=profile.custom,
+            internal=profile.internal,
             mastery=profile.mastery,
             follow=profile.follow,
+            takeover=profile.takeover,
         ),
         role,
         profile.main_role,

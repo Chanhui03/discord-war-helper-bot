@@ -7,6 +7,7 @@ import discord
 from app.database.repositories import (
     call_averages,
     custom_records,
+    rank_averages,
     last_assigned_roles,
     swap_team_slots,
     trait_scores,
@@ -23,7 +24,7 @@ def teams_embed(match, result) -> discord.Embed:
     embed = discord.Embed(
         title=f"내전 #{match.id} 팀 구성",
         description=(
-            f"밸런스 점수 **{result.score:.2f}** "
+            f"밸런스 점수 **{result.score:.1f}** "
             + (
                 f"({result.splits}개 분할 · {result.evaluated:,}개 배정 평가)\n"
                 if result.evaluated
@@ -71,6 +72,7 @@ async def match_profiles(session, match):
     )
     traits = await trait_scores(session, player_ids)
     calls = await call_averages(session, player_ids, match.discord_server_id)
+    ranks = await rank_averages(session, player_ids, match.discord_server_id)
     return [
         build_profile(
             entry.player,
@@ -78,6 +80,7 @@ async def match_profiles(session, match):
             last_role=previous.get(entry.player_id),
             traits=traits.get(entry.player_id),
             recorded_call=calls.get(entry.player_id, (None, 0))[0],
+            ranks=ranks.get(entry.player_id),
         )
         for entry in match.participants
     ]

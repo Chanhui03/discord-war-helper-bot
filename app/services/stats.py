@@ -10,6 +10,8 @@ from app.services.matchmaking import PlayerProfile
 from app.services.scoring import (
     base_score,
     call_score,
+    rank_score,
+    takeover_of,
     champion_pool_score,
     custom_score,
     mastery_score,
@@ -105,20 +107,22 @@ def aggregate_matches(matches: List[Dict[str, Any]], puuid: str) -> Dict[str, An
         "roles": roles,
     }
 
-def player_score(
-    tier: Optional[str],
-    division: Optional[str],
-    lp: int,
-    recent_win_rate: float,
-    avg_kda: float,
-    main_role_score: Optional[float] = None,
-) -> float:
-    """설계서 6장 가중합으로 플레이어의 기본 점수를 낸다."""
+def profile_score(profile: PlayerProfile, custom_games: int = 0) -> float:
+    """스냅샷 하나의 종합 점수. 라인 배수를 곱하기 전 값이다.
+
+    밸런싱이 쓰는 power_of 와 같은 요소·같은 전환을 쓴다. 표시용으로 따로
+    계산하면 화면에 뜬 점수와 실제로 팀을 가르는 점수가 어긋난다.
+    """
     return base_score(
-        tier=tier_score(tier, division, lp),
-        role=main_role_score,
-        recent_form=recent_win_rate * 100,
-        performance=performance_score(avg_kda),
+        tier=profile.tier,
+        role=profile.role_scores.get(profile.main_role),
+        recent_form=profile.recent_form,
+        performance=profile.performance,
+        custom=profile.custom,
+        internal=profile.internal,
+        mastery=profile.mastery,
+        follow=profile.follow,
+        takeover=takeover_of(custom_games),
     )
 
 async def fetch_matches(riot, match_ids: List[str]) -> List[Dict[str, Any]]:
@@ -197,6 +201,7 @@ def build_profile(
     last_role: Optional[str] = None,
     traits: Optional[Dict[str, Any]] = None,
     recorded_call: Optional[float] = None,
+    ranks: Optional[Any] = None,
 ) -> PlayerProfile:
     """저장된 전적과 내전 기록에서 밸런싱용 스냅샷을 만든다.
 
@@ -217,6 +222,8 @@ def build_profile(
         recent_form=recent.recent_win_rate * 100 if recent else None,
         performance=performance_score(recent.avg_kda) if recent else None,
         custom=custom_score(custom_games, custom_wins),
+        internal=rank_score(*(ranks or (None, 0))),
+        takeover=takeover_of(custom_games),
         win_rate=stats.win_rate if stats else 0.0,
         main_role=player.main_role,
         secondary_role=player.secondary_role,

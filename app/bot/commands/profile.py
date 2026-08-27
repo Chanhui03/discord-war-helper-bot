@@ -8,14 +8,17 @@ from discord.ext import commands
 from app.bot.messages import NEED_REGISTER
 from app.config.settings import ROOT
 from app.database.repositories import (
+    call_averages,
     custom_records,
     custom_stats,
     get_player,
     mvp_counts,
+    rank_averages,
+    trait_scores,
 )
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
-from app.services.stats import player_score
+from app.services.stats import build_profile, profile_score
 
 RANK_ICONS = ROOT / "assets" / "ranks"
 
@@ -40,6 +43,9 @@ class Profile(commands.Cog):
             records = await custom_records(session, [player.id], interaction.guild_id)
             recorded = await custom_stats(session, player.id, interaction.guild_id)
             mvps = await mvp_counts(session, [player.id], interaction.guild_id)
+            traits = (await trait_scores(session, [player.id])).get(player.id)
+            calls = (await call_averages(session, [player.id], interaction.guild_id))
+            ranks = (await rank_averages(session, [player.id], interaction.guild_id))
 
         stats = player.stats
         if stats is None:
@@ -49,16 +55,20 @@ class Profile(commands.Cog):
             return
 
         roles = {row.role: row for row in player.roles}
-        main_row = roles.get(player.main_role)
-        score = player_score(
-            stats.tier,
-            stats.division,
-            stats.lp,
-            stats.recent_win_rate,
-            stats.avg_kda,
-            main_row.role_score if main_row else None,
-        )
         custom_games, custom_wins = records.get(player.id, (0, 0))
+        # 밸런싱과 같은 스냅샷으로 계산한다. 표시용을 따로 계산하면 화면에 뜬
+        # 점수와 실제로 팀을 가르는 점수가 어긋난다.
+        score = profile_score(
+            build_profile(
+                player,
+                custom_games,
+                custom_wins,
+                traits=traits,
+                recorded_call=calls.get(player.id, (None, 0))[0],
+                ranks=ranks.get(player.id),
+            ),
+            custom_games,
+        )
 
         rank = (
             f"{stats.tier} {stats.division} {stats.lp}LP"

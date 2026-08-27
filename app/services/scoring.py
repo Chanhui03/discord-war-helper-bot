@@ -22,6 +22,8 @@ WEIGHTS = {
     "recent_form": 0.15,
     "performance": 0.10,
     "custom": 0.10,
+    # 내전 판별 평가에서 온 순위. 승률과 달리 밸런서가 지우지 못하는 신호다.
+    "internal": 0.10,
     "mastery": 0.05,
     # 오더수행. 많을수록 좋은 가산 자원이라 그냥 더한다(메인오더와 반대).
     "follow": 0.05,
@@ -44,6 +46,12 @@ NEUTRAL = 50.0
 TRAIT_MIN_VOTES = 1
 # 내전을 이만큼 치르면 주관 지표는 힘을 잃고 실제 기록에 자리를 넘긴다.
 TRAIT_FADE_GAMES = 10
+# 솔랭 지표가 내전 지표에 자리를 넘기는 판수. 주관 지표가 빠지는 시점과 같다.
+# 내전을 충분히 치른 사람은 솔랭 티어보다 내전에서 실제로 한 것이 잘 설명한다.
+TAKEOVER_GAMES = TRAIT_FADE_GAMES
+
+# 내전 밖에서 온 지표. 판수가 쌓이면 이 넷의 가중치가 함께 줄어든다.
+SOLO_COMPONENTS = ("tier", "role", "recent_form", "performance")
 
 # 챔피언폭을 셀 때 주력으로 인정할 숙련도 비율. 가장 많이 판 챔피언의 이만큼은
 # 되어야 저격밴을 맞았을 때 대신 꺼낼 수 있다고 본다.
@@ -199,13 +207,18 @@ def base_score(
     recent_form: Optional[float] = None,
     performance: Optional[float] = None,
     custom: Optional[float] = None,
+    internal: Optional[float] = None,
     mastery: Optional[float] = None,
     follow: Optional[float] = None,
+    takeover: float = 0.0,
 ) -> float:
     """제공된 요소만으로 가중 평균을 낸다. 없는 요소의 가중치는 나머지에 재분배된다.
 
-    가중치는 합이 1 일 필요가 없다. 항상 있는 요소들끼리 다시 정규화하므로
-    상대 비율만 의미가 있다.
+    가중치는 합이 1 일 필요가 없다. 있는 요소들끼리 다시 정규화하므로 상대
+    비율만 의미가 있다.
+
+    takeover 는 0~1 로, 솔랭에서 온 지표의 힘을 얼마나 뺄지다. 내전 판수가
+    쌓일수록 1 에 가까워져 티어·라인·최근폼·KDA 가 물러나고 내전 기록만 남는다.
     """
     components = {
         "tier": tier,
@@ -213,6 +226,7 @@ def base_score(
         "recent_form": recent_form,
         "performance": performance,
         "custom": custom,
+        "internal": internal,
         "mastery": mastery,
         "follow": follow,
     }
@@ -220,8 +234,18 @@ def base_score(
     if not available:
         return NEUTRAL
 
-    total_weight = sum(WEIGHTS[k] for k in available)
-    return sum(WEIGHTS[k] * v for k, v in available.items()) / total_weight
+    weights = {
+        key: WEIGHTS[key] * (1.0 - takeover if key in SOLO_COMPONENTS else 1.0)
+        for key in available
+    }
+    total_weight = sum(weights.values())
+    # 내전 지표가 하나도 없는데 솔랭 지표를 다 빼면 남는 게 없다. 그럴 때는
+    # 넘겨줄 곳이 없다는 뜻이므로 전환하지 않는다.
+    if total_weight <= 0:
+        weights = {key: WEIGHTS[key] for key in available}
+        total_weight = sum(weights.values())
+
+    return sum(weights[k] * v for k, v in available.items()) / total_weight
 
 def role_affinity(
     role: str,
@@ -251,6 +275,24 @@ def role_power(
     return score * ROLE_MULTIPLIERS[
         role_affinity(role, main_role, secondary_role, avoid_role)
     ]
+
+def takeover_of(custom_games: int) -> float:
+    """내전 판수로 본 전환 진행도. 0 이면 솔랭 지표 그대로, 1 이면 내전만."""
+    return min(custom_games / TAKEOVER_GAMES, 1.0)
+
+def rank_score(average: Optional[float], games: int, team_size: int = 5) -> Optional[float]:
+    """내전 판별 평가의 평균 순위를 0~100 으로. 기록이 없으면 None.
+
+    1 등이 100, 꼴찌가 0 이다. 표본이 적으면 중립으로 수축시킨다.
+    승률과 달리 밸런서가 팀을 잘 맞출수록 사라지는 신호가 아니라서,
+    내전 판수가 쌓인 뒤에도 사람을 계속 가른다.
+    """
+    if average is None or games <= 0:
+        return None
+
+    raw = (team_size - average) / (team_size - 1) * 100
+    confidence = min(games / 10.0, 1.0)
+    return NEUTRAL + (raw - NEUTRAL) * confidence
 
 def custom_score(games: int, wins: int) -> Optional[float]:
     """내전 성적을 0~100 으로 환산한다(설계서 6장 Custom Game Score).

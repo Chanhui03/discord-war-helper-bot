@@ -642,6 +642,33 @@ async def call_averages(
     )
     return {row.player_id: (float(row.average), row.games) for row in result}
 
+async def rank_averages(
+    session: AsyncSession, player_ids: Sequence[int], server_id: int
+) -> Dict[int, Tuple[float, int]]:
+    """플레이어별 (팀 내 평균 순위, 평가된 내전 수).
+
+    순위는 그 판 안의 상대 비교라 절대 점수보다 판별 기준이 덜 흔들린다.
+    판이 쌓일수록 평균이 안정된다.
+    """
+    if not player_ids:
+        return {}
+
+    result = await session.execute(
+        select(
+            MatchReview.player_id,
+            func.avg(MatchReview.rank).label("average"),
+            func.count().label("games"),
+        )
+        .join(Match, Match.id == MatchReview.match_id)
+        .where(
+            *_finished_in(server_id),
+            MatchReview.player_id.in_(player_ids),
+            MatchReview.rank.isnot(None),
+        )
+        .group_by(MatchReview.player_id)
+    )
+    return {row.player_id: (float(row.average), row.games) for row in result}
+
 async def match_reviews(session: AsyncSession, match_id: int) -> Sequence:
     """한 내전의 평가 결과. 근거를 보여줄 때 쓴다. 팀별 순위 순으로 나온다."""
     result = await session.execute(
