@@ -468,17 +468,11 @@ async def finish_match(
 
     return await _commit_and_reload(session, match)
 
-async def finish_match_with_records(
-    session: AsyncSession, match_id: int, game: GameRecord
-) -> Tuple[str, Optional[Match]]:
-    """사설 전적 기록으로 승패와 개인 성적을 함께 확정한다."""
-    match = await get_match(session, match_id)
-    if match is None or match.completed:
-        return "closed", None
-
+async def _pair_records(session: AsyncSession, match: Match, game: GameRecord):
+    """참가자마다 전적 파일의 기록을 붙인다. 못 찾으면 None."""
     records = game.by_riot_id()
     keys = await match_riot_ids(session, match)
-    paired = [
+    return [
         (
             entry,
             next(
@@ -488,16 +482,21 @@ async def finish_match_with_records(
         for entry in match.participants
     ]
 
-    # 로비에서 진영을 바꿔 들어갔다면 우리 A/B 와 실제 승패가 어긋난다. 틀린 승리
-    # 팀은 custom_records 집계까지 오염시키므로, 쓰기 전에 확인하고 아무것도 남기지
-    # 않는다. (여기서 rollback 을 하면 호출자가 든 객체까지 만료된다)
-    # 한쪽 팀이 통째로 안 맞으면 승패를 알 수 없어 같은 길로 보낸다.
+def _winner_of(paired) -> Optional[str]:
+    """파일이 말하는 승리 팀. 알 수 없으면 None.
+
+    로비에서 진영을 바꿔 들어갔다면 우리 A/B 와 실제 승패가 어긋난다. 틀린 승리
+    팀은 custom_records 집계까지 오염시키므로 쓰기 전에 확인한다. 한쪽 팀이
+    통째로 안 맞아도 승패를 알 수 없어 같은 길로 보낸다.
+    """
     a_won = {r.win for entry, r in paired if r and entry.team == "A"}
     b_won = {r.win for entry, r in paired if r and entry.team == "B"}
     if len(a_won) != 1 or len(b_won) != 1 or a_won == b_won:
-        return "mismatch", None
+        return None
+    return "A" if a_won == {True} else "B"
 
-    winner = "A" if a_won == {True} else "B"
+def _apply_records(paired) -> None:
+    """개인 성적을 참가자 스냅샷에 채운다. 못 맞춘 사람은 비워 둔다."""
     # 사설 게임은 클라이언트가 라인을 제대로 매기지 못해 탑 라이너가 정글로 온다.
     # 한 팀에 같은 라인이 둘이면 그 라인은 믿을 수 없으니 배정한 라인을 쓴다.
     duplicated = Counter(
@@ -506,8 +505,6 @@ async def finish_match_with_records(
         if record and record.position
     )
     for entry, record in paired:
-        # 못 맞춘 참가자도 팀 승패는 남긴다. 개인 성적만 비워 둔다.
-        entry.win = entry.team == winner
         if record is None:
             continue
 
@@ -527,12 +524,71 @@ async def finish_match_with_records(
             else record.position
         )
 
+async def finish_match_with_records(
+    session: AsyncSession, match_id: int, game: GameRecord
+) -> Tuple[str, Optional[Match]]:
+    """사설 전적 기록으로 승패와 개인 성적을 함께 확정한다."""
+    match = await get_match(session, match_id)
+    if match is None or match.completed:
+        return "closed", None
+
+    paired = await _pair_records(session, match, game)
+    # 쓰기 전에 확인하고 어긋나면 아무것도 남기지 않는다.
+    # (여기서 rollback 을 하면 호출자가 든 객체까지 만료된다)
+    winner = _winner_of(paired)
+    if winner is None:
+        return "mismatch", None
+
+    for entry, _ in paired:
+        # 못 맞춘 참가자도 팀 승패는 남긴다. 개인 성적만 비워 둔다.
+        entry.win = entry.team == winner
+    _apply_records(paired)
+
     match.duration = game.duration
     match.team_a_score = int(winner == "A")
     match.team_b_score = int(winner == "B")
     match.completed = True
 
     return winner, await _commit_and_reload(session, match)
+
+async def fill_match_records(
+    session: AsyncSession, match_id: int, game: GameRecord
+) -> Tuple[str, Optional[Match]]:
+    """이미 확정된 내전에 개인 성적만 뒤늦게 채운다.
+
+    버튼으로만 결과를 넣은 내전은 승패밖에 없어 라인별 지표에서 빠진다.
+    나중에 전적 파일을 구하면 이 경로로 메운다. 승패는 이미 기록돼 있으므로
+    건드리지 않고, 파일이 그와 다른 말을 하면 엉뚱한 경기이므로 거절한다.
+    """
+    match = await get_match(session, match_id)
+    if match is None:
+        return "missing", None
+    if not match.completed:
+        return "open", None
+
+    paired = await _pair_records(session, match, game)
+    winner = _winner_of(paired)
+    if winner is None:
+        return "mismatch", None
+    if winner != ("A" if match.team_a_score else "B"):
+        return "conflict", None
+
+    _apply_records(paired)
+    match.duration = game.duration
+
+    return "filled", await _commit_and_reload(session, match)
+
+async def completed_matches(
+    session: AsyncSession, server_id: int, limit: int = 20
+) -> Sequence[Match]:
+    """그 서버에서 끝난 내전을 최근 순으로."""
+    result = await session.execute(
+        select(Match)
+        .where(*_finished_in(server_id))
+        .order_by(Match.id.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
 
 async def save_match_reviews(session: AsyncSession, match_id: int, calls) -> int:
     """판별 평가를 저장한다. 같은 내전을 다시 채점하면 덮어쓴다."""
