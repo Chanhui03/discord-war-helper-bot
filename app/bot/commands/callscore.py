@@ -128,7 +128,11 @@ class CallScore(commands.Cog):
         try:
             transcripts = {"A팀": await read(team_a), "B팀": await read(team_b)}
             calls = await score_calls(
-                roster_a, roster_b, transcripts, await read(spectators)
+                roster_a,
+                roster_b,
+                transcripts,
+                await read(spectators),
+                duration=match.duration,
             )
         except (TranscriptError, UnicodeDecodeError) as error:
             await interaction.followup.send(str(error), ephemeral=True)

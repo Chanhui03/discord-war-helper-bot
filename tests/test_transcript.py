@@ -24,6 +24,7 @@ def entry(player_id, name, role, win=True, **stats):
     blank = dict(
         kills=None, deaths=None, assists=None, cs=None, damage=None,
         damage_taken=None, gold=None, wards=None, first_blood=None, first_tower=None,
+        played_role=None, champion_id=None,
     )
     return SimpleNamespace(
         player_id=player_id,
@@ -75,6 +76,51 @@ class TestPrompt:
         )
         assert "2/7/14" in prompt
         assert "와드 22" in prompt
+
+    def test_the_game_length_and_team_kills_are_given(self):
+        """절대 수치로만 보면 25분의 딜 30,000 과 45분의 딜 30,000 이 같아진다."""
+        prompt = build_prompt(
+            [entry(1, "가", "MID", kills=9, deaths=1, assists=3, cs=200, damage=30000,
+                   damage_taken=1, gold=1, wards=1),
+             entry(2, "나", "TOP", kills=6, deaths=1, assists=3, cs=100, damage=1,
+                   damage_taken=1, gold=1, wards=1)],
+            [entry(3, "다", "ADC", win=False, kills=4, deaths=9, assists=1, cs=150,
+                   damage=1, damage_taken=1, gold=1, wards=1)],
+            {"A팀": SAMPLE, "B팀": ""},
+            duration=1513,
+        )
+        assert "경기 시간 25분 13초" in prompt
+        assert "A팀 총 킬 15" in prompt
+        assert "B팀 총 킬 4" in prompt
+
+    def test_the_champion_is_named(self):
+        """서폿의 딜과 원딜의 딜을 같은 잣대로 보지 않으려면 챔피언이 필요하다."""
+        prompt = build_prompt(
+            [entry(1, "가", "SUPPORT", champion_id=412)],
+            [entry(2, "나", "TOP", win=False)],
+            {"A팀": SAMPLE, "B팀": ""},
+            champions={412: "쓰레쉬"},
+        )
+        assert "쓰레쉬" in prompt
+
+    def test_an_unknown_champion_falls_back_to_its_number(self):
+        prompt = build_prompt(
+            [entry(1, "가", "SUPPORT", champion_id=999)],
+            [entry(2, "나", "TOP", win=False)],
+            {"A팀": SAMPLE, "B팀": ""},
+        )
+        assert "챔피언#999" in prompt
+
+    def test_the_lane_actually_played_is_marked_when_it_differs(self):
+        """스왑한 판에서 배정 라인만 주면 대사와 지표가 엇갈린다."""
+        prompt = build_prompt(
+            [entry(1, "가", "MID", played_role="JUNGLE"),
+             entry(2, "나", "TOP", played_role="TOP")],
+            [entry(3, "다", "ADC", win=False)],
+            {"A팀": SAMPLE, "B팀": ""},
+        )
+        assert "미드(실제 정글)" in prompt
+        assert "탑(실제 탑)" not in prompt
 
     def test_a_match_without_a_replay_file_says_so(self):
         prompt = build_prompt(

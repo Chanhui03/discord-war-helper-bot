@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.config.settings import settings
 from app.roles import ROLE_LABELS
+from app.services.champions import champion_names
 from app.services.matchmaking import TEAM_SIZE
 
 MODEL = "claude-opus-5"
@@ -76,18 +77,45 @@ def roster_lines(entries) -> str:
         for entry in entries
     )
 
-def scoreboard(entries) -> str:
+def match_facts(team_a, team_b, duration: Optional[int]) -> str:
+    """경기 단위 사실. 참가자 줄만으로는 계산할 수 없는 분모들이다.
+
+    같은 딜 30,000 도 25분과 45분이 다르고, 같은 15킬도 팀이 30킬을 낸 판과
+    18킬을 낸 판이 다르다. 이게 없으면 모델은 절대 수치로만 판단하게 된다.
+    """
+    parts = []
+    if duration:
+        parts.append(f"경기 시간 {duration // 60}분 {duration % 60}초")
+    for label, entries in (("A팀", team_a), ("B팀", team_b)):
+        kills = [entry.kills for entry in entries if entry.kills is not None]
+        if kills:
+            parts.append(f"{label} 총 킬 {sum(kills)}")
+    return " · ".join(parts)
+
+def lane_of(entry) -> str:
+    """배정 라인. 실제로 간 라인이 다르면 함께 적는다."""
+    lane = ROLE_LABELS[entry.role]
+    played = entry.played_role
+    if played and played != entry.role:
+        return f"{lane}(실제 {ROLE_LABELS[played]})"
+    return lane
+
+def scoreboard(entries, champions: Optional[Dict[int, str]] = None) -> str:
     """전적 파일로 채워진 기록. 대본만으로는 안 보이는 것을 메운다.
 
     콜은 잘 냈지만 지표가 나쁜 경우와 그 반대를 가르려면 둘 다 필요하다.
     파일 없이 버튼으로만 확정한 내전은 기록이 비어 있어 대본만 남는다.
     """
+    names = champions or {}
     lines = []
     for entry in entries:
         head = (
             f"- player_id={entry.player_id} · {entry.player.riot_game_name} · "
-            f"{ROLE_LABELS[entry.role]}"
+            f"{lane_of(entry)}"
         )
+        # 챔피언이 있어야 서폿의 딜과 원딜의 딜을 같은 잣대로 보지 않는다.
+        if entry.champion_id is not None:
+            head += f" · {names.get(entry.champion_id, f'챔피언#{entry.champion_id}')}"
         if entry.kills is None:
             lines.append(f"{head} · (개인 기록 없음)")
             continue
@@ -119,6 +147,11 @@ INSTRUCTIONS = """당신은 롤 내전의 음성 대본과 전적 기록을 함�
 - 죽음이 무의미했는지 팀을 살린 것인지
 - 오브젝트·교전 타이밍을 먼저 부르고 팀이 실제로 따랐는지
 
+**절대 수치로 비교하지 마라.** 딜·골드·CS 는 경기 시간으로 나눠 보고, 킬과
+어시스트는 팀 총 킬로 나눠 관여율로 봐라. 챔피언도 함께 봐라 — 서폿의 딜
+10,000 과 원딜의 딜 10,000 은 전혀 다른 이야기다. 라인에 '실제'가 붙어
+있으면 그 사람은 배정과 다른 라인을 갔으므로 실제 라인 기준으로 봐라.
+
 ## 메인오더
 순위와 별개로, 판을 읽고 지시를 내리는 능력을 1~10 으로 매겨라.
 먼저 부르고 팀을 움직인 사람이 높다. 반응만 하거나 자기 라인 상황만
@@ -138,7 +171,12 @@ INSTRUCTIONS = """당신은 롤 내전의 음성 대본과 전적 기록을 함�
 - 개인 기록이 없는 판은 대본만 보고 매겨라."""
 
 def build_prompt(
-    team_a, team_b, transcripts: Dict[str, str], spectators: Optional[str] = None
+    team_a,
+    team_b,
+    transcripts: Dict[str, str],
+    spectators: Optional[str] = None,
+    duration: Optional[int] = None,
+    champions: Optional[Dict[int, str]] = None,
 ) -> str:
     """팀별 로스터·전적·대본을 한 프롬프트로 묶는다.
 
@@ -146,12 +184,15 @@ def build_prompt(
     측정이 아니라 기존 점수의 메아리가 된다.
     """
     parts = [INSTRUCTIONS, ""]
+    facts = match_facts(team_a, team_b, duration)
+    if facts:
+        parts += ["## 경기 정보", facts, ""]
     for label, entries in (("A팀", team_a), ("B팀", team_b)):
         won = entries and entries[0].win
         mark = " (승)" if won else " (패)" if won is False else ""
         parts += [
             f"## {label}{mark} 로스터와 전적",
-            scoreboard(entries),
+            scoreboard(entries, champions),
             "",
             f"## {label} 음성 대본",
             render(parse(transcripts.get(label, ""))) or "(대본 없음)",
@@ -193,7 +234,11 @@ def ranked(calls: Sequence[PlayerCall], roster: Sequence[int]) -> List[PlayerCal
     return [] if len(ranks) != len(set(ranks)) else team
 
 async def score_calls(
-    team_a, team_b, transcripts: Dict[str, str], spectators: Optional[str] = None
+    team_a,
+    team_b,
+    transcripts: Dict[str, str],
+    spectators: Optional[str] = None,
+    duration: Optional[int] = None,
 ) -> List[PlayerCall]:
     """대본을 읽고 메인오더 점수를 낸다. 확신이 낮은 사람은 빠진다."""
     import anthropic
@@ -201,17 +246,20 @@ async def score_calls(
     if not any(transcripts.get(label, "").strip() for label in ("A팀", "B팀")):
         raise TranscriptError("읽을 수 있는 대본이 없습니다.")
 
+    prompt = build_prompt(
+        team_a,
+        team_b,
+        transcripts,
+        spectators,
+        duration=duration,
+        champions=await champion_names(),
+    )
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     response = await client.messages.parse(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         thinking={"type": "adaptive"},
-        messages=[
-            {
-                "role": "user",
-                "content": build_prompt(team_a, team_b, transcripts, spectators),
-            }
-        ],
+        messages=[{"role": "user", "content": prompt}],
         output_format=CallReport,
     )
 
