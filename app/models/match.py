@@ -27,6 +27,10 @@ class Match(Base):
     team_a_score: Mapped[int] = mapped_column(Integer, default=0)
     team_b_score: Mapped[int] = mapped_column(Integer, default=0)
     completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 「팀 그대로」로 이어 만든 내전이면 직전 판. 피어리스 챔피언 풀의 범위다.
+    previous_match_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("matches.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -67,6 +71,8 @@ class MatchPlayer(Base):
     first_tower: Mapped[Optional[bool]] = mapped_column(Boolean)
     # 실제로 간 라인. 배정(role)과 다를 수 있어 따로 남긴다.
     played_role: Mapped[Optional[str]] = mapped_column(String(8))
+    # 사설 전적 파일로 채운다. 「팀 그대로」의 피어리스 목록에 쓴다.
+    champion_id: Mapped[Optional[int]] = mapped_column(Integer)
 
     player: Mapped["Player"] = relationship(lazy="selectin")
 

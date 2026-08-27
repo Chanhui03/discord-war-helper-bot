@@ -518,6 +518,7 @@ def _apply_records(paired) -> None:
         entry.wards = record.wards
         entry.first_blood = record.first_blood
         entry.first_tower = record.first_tower
+        entry.champion_id = record.champion_id
         entry.played_role = (
             entry.role
             if duplicated[(entry.team, record.position)] > 1
@@ -577,6 +578,65 @@ async def fill_match_records(
     match.duration = game.duration
 
     return "filled", await _commit_and_reload(session, match)
+
+async def create_rematch(
+    session: AsyncSession, match_id: int
+) -> Tuple[str, Optional[Match]]:
+    """끝난 내전의 팀·라인을 그대로 옮긴 다음 판을 만든다.
+
+    previous_match_id 로 앞 판과 이어 둔다. 이 사슬이 피어리스 챔피언 풀의
+    범위다. 팀을 새로 짜면 사슬이 끊겨 풀도 초기화된다.
+    """
+    previous = await get_match(session, match_id)
+    if previous is None or not previous.completed:
+        return "open", None
+    if await get_open_match(session, previous.discord_server_id) is not None:
+        return "busy", None
+
+    match = Match(
+        discord_server_id=previous.discord_server_id, previous_match_id=previous.id
+    )
+    session.add(match)
+    await session.flush()
+
+    for entry in previous.participants:
+        session.add(
+            MatchPlayer(
+                match_id=match.id,
+                player_id=entry.player_id,
+                team=entry.team,
+                role=entry.role,
+            )
+        )
+    # 관전자도 그대로 넘긴다. 로비를 거치지 않아 다시 누를 자리가 없다.
+    for viewer in previous.spectators:
+        session.add(MatchSpectator(match_id=match.id, discord_id=viewer.discord_id))
+
+    return "created", await _commit_and_reload(session, match)
+
+async def series_champions(
+    session: AsyncSession, match: Match
+) -> Tuple[int, Dict[int, list]]:
+    """이어진 앞 판들의 수와, 참가자별로 그동안 쓴 챔피언(오래된 판이 앞).
+
+    전적 파일 없이 버튼으로만 확정한 판은 챔피언이 비어 있어 빠진다.
+    """
+    chain = []
+    previous_id = match.previous_match_id
+    # previous_match_id 는 항상 자기보다 앞선 판을 가리켜 순환하지 않는다.
+    while previous_id is not None:
+        previous = await get_match(session, previous_id)
+        if previous is None:
+            break
+        chain.append(previous)
+        previous_id = previous.previous_match_id
+
+    used: Dict[int, list] = {}
+    for previous in reversed(chain):
+        for entry in previous.participants:
+            if entry.champion_id is not None:
+                used.setdefault(entry.player_id, []).append(entry.champion_id)
+    return len(chain), used
 
 async def completed_matches(
     session: AsyncSession, server_id: int, limit: int = 20

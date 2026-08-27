@@ -29,7 +29,7 @@ def test_result_buttons_carry_the_match_number():
 
 
 def test_rating_buttons_carry_the_match_number():
-    assert ids(RatingView(42)) == ["rating:rate:42", "rating:show:42"]
+    assert ids(RatingView(42)) == ["rating:rate:42", "rating:again:42", "rating:show:42"]
 
 
 def test_the_match_number_is_kept_on_the_view():

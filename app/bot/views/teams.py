@@ -9,16 +9,23 @@ from app.database.repositories import (
     custom_records,
     rank_averages,
     last_assigned_roles,
+    series_champions,
     swap_team_slots,
     trait_scores,
 )
 from app.database.session import session_factory
 from app.log import event
 from app.roles import ROLE_LABELS, ROLES
+from app.services.champions import champion_names
 from app.services.matchmaking import score_assignment
 from app.services.stats import build_profile
 
 log = logging.getLogger(__name__)
+
+NO_CHAMPIONS = (
+    "앞 판의 챔피언 기록이 없습니다. `/결과` 에 사설 전적 파일을 첨부하면 "
+    "다음 판부터 여기에 쌓입니다."
+)
 
 def teams_embed(match, result) -> discord.Embed:
     embed = discord.Embed(
@@ -61,6 +68,37 @@ def teams_embed(match, result) -> discord.Embed:
             name=f"{label} — 전투력 {team.power:.1f}",
             value="\n".join(lines),
         )
+    return embed
+
+def champion_lines(match, used, names) -> str:
+    """라인마다 `A팀이 쓴 챔피언 / B팀이 쓴 챔피언`. 피어리스처럼 못 고를 목록이다."""
+    slots = {(entry.team, entry.role): entry.player_id for entry in match.participants}
+    lines = []
+    for role in ROLES:
+        sides = [
+            ", ".join(
+                names.get(champion, f"#{champion}")
+                for champion in used.get(slots[(team, role)], [])
+            )
+            or "없음"
+            for team in ("A", "B")
+        ]
+        lines.append(f"`{ROLE_LABELS[role]:<2}` {sides[0]} / {sides[1]}")
+    return "\n".join(lines)
+
+async def series_embed(session, match, result) -> discord.Embed:
+    """팀 구성 임베드. 「팀 그대로」로 이어진 판이면 이미 쓴 챔피언을 덧붙인다."""
+    embed = teams_embed(match, result)
+    if match.previous_match_id is None:
+        return embed
+
+    played, used = await series_champions(session, match)
+    names = await champion_names() if used else {}
+    embed.add_field(
+        name=f"이미 쓴 챔피언 · {played + 1}판째 (A팀 / B팀)",
+        value=champion_lines(match, used, names) if used else NO_CHAMPIONS,
+        inline=False,
+    )
     return embed
 
 async def match_profiles(session, match):
@@ -108,11 +146,13 @@ class SwapSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         first, second = (int(value) for value in self.values)
+        # 챔피언 이름표를 처음 받아올 때는 3초를 넘길 수 있다.
+        await interaction.response.defer()
 
         async with session_factory() as session:
             match = await swap_team_slots(session, self.match_id, first, second)
             if match is None:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "이미 결과가 확정됐거나 없는 내전입니다.", ephemeral=True
                 )
                 return
@@ -122,7 +162,9 @@ class SwapSelect(discord.ui.Select):
                 entry.player_id: (entry.team, entry.role)
                 for entry in match.participants
             }
-            embed = teams_embed(match, score_assignment(profiles, assignment))
+            embed = await series_embed(
+                session, match, score_assignment(profiles, assignment)
+            )
 
         event(
             log,
@@ -131,7 +173,7 @@ class SwapSelect(discord.ui.Select):
             by=interaction.user.id,
             swapped=f"{first}-{second}",
         )
-        await interaction.response.edit_message(embed=embed, view=TeamEditView(match))
+        await interaction.edit_original_response(embed=embed, view=TeamEditView(match))
 
 class TeamEditView(discord.ui.View):
     """팀 생성 뒤에도 서버 인원 누구나 자리를 바꿀 수 있게 한다."""

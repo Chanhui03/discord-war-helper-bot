@@ -42,6 +42,7 @@ class ParticipantRecord:
     first_tower: bool
     # 실제로 간 라인. 읽을 수 없으면 None.
     position: Optional[str]
+    champion_id: int
 
 @dataclass(frozen=True)
 class GameRecord:
@@ -103,6 +104,7 @@ def _participants(game: Dict[str, Any]) -> Tuple[ParticipantRecord, ...]:
                 first_blood=bool(stats.get("firstBloodKill")),
                 first_tower=bool(stats.get("firstTowerKill")),
                 position=position_of(participant.get("timeline", {})),
+                champion_id=participant.get("championId", 0),
             )
         )
     return tuple(records)

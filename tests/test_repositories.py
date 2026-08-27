@@ -15,6 +15,7 @@ from app.database.repositories import (
     add_alias,
     aliases_for,
     create_match,
+    create_rematch,
     custom_position_stats,
     custom_records,
     custom_stats,
@@ -31,6 +32,7 @@ from app.database.repositories import (
     pick_mvp,
     remove_alias,
     save_trait,
+    series_champions,
     swap_team_slots,
     trait_scores,
     unwatch_match,
@@ -489,8 +491,12 @@ async def named_match(session, server_id=5):
     )
     return await save_teams(session, match.id, result)
 
-def game_for(match, winner="A", swap=()):
-    """배정된 팀 그대로 winner 팀이 이긴 기록. swap 의 인덱스는 승패를 뒤집는다."""
+def game_for(match, winner="A", swap=(), champions=0):
+    """배정된 팀 그대로 winner 팀이 이긴 기록. swap 의 인덱스는 승패를 뒤집는다.
+
+    champions 는 챔피언 번호의 시작점이다. 이어진 판마다 다르게 줘서 시리즈에
+    쌓이는 챔피언을 구분한다.
+    """
     return GameRecord(
         game_id=1,
         created_at=1,
@@ -513,6 +519,7 @@ def game_for(match, winner="A", swap=()):
                 first_blood=index == 0,
                 first_tower=index == 1,
                 position=ROLES[index % 5],
+                champion_id=champions + index + 1,
             )
             for index, entry in enumerate(match.participants)
         ),
@@ -950,3 +957,56 @@ class TestMvpCounts:
 
     async def test_empty_player_list(self, session):
         assert await mvp_counts(session, [], 5) == {}
+
+
+class TestRematch:
+    """「팀 그대로」로 이어지는 판과, 그 사슬에 쌓이는 챔피언."""
+
+    async def played_match(self, session, champions=0):
+        match = await named_match(session)
+        _, saved = await finish_match_with_records(
+            session, match.id, game_for(match, champions=champions)
+        )
+        return saved
+
+    async def test_it_copies_every_team_and_lane(self, session):
+        played = await self.played_match(session)
+
+        status, again = await create_rematch(session, played.id)
+
+        assert status == "created"
+        assert again.previous_match_id == played.id
+        assert again.completed is False
+        assert {(e.player_id, e.team, e.role) for e in again.participants} == {
+            (e.player_id, e.team, e.role) for e in played.participants
+        }
+
+    async def test_it_refuses_before_the_result_is_confirmed(self, session):
+        match = await named_match(session)
+
+        assert await create_rematch(session, match.id) == ("open", None)
+
+    async def test_it_refuses_while_another_match_is_open(self, session):
+        played = await self.played_match(session)
+        await create_rematch(session, played.id)
+
+        assert await create_rematch(session, played.id) == ("busy", None)
+
+    async def test_champions_pile_up_along_the_chain(self, session):
+        first = await self.played_match(session)
+        _, opened = await create_rematch(session, first.id)
+        _, second = await finish_match_with_records(
+            session, opened.id, game_for(opened, champions=100)
+        )
+        _, third = await create_rematch(session, second.id)
+
+        played, used = await series_champions(session, third)
+
+        assert played == 2
+        for index, entry in enumerate(first.participants):
+            assert used[entry.player_id] == [index + 1, index + 101]
+
+    async def test_a_fresh_match_has_no_pool(self, session):
+        match = await named_match(session)
+
+        assert await series_champions(session, match) == (0, {})

@@ -8,10 +8,14 @@
 맞는지 확인하는 정답지로 쓴다.
 """
 
+import logging
+
 import discord
 
 from app.bot.views.persistent import PersistentView
+from app.bot.views.teams import TeamEditView, match_profiles, series_embed
 from app.database.repositories import (
+    create_rematch,
     get_match,
     pick_vote_mvp,
     save_vote,
@@ -19,10 +23,19 @@ from app.database.repositories import (
     vote_counts,
 )
 from app.database.session import session_factory
+from app.log import event
 from app.roles import ROLE_LABELS
+from app.services.matchmaking import score_assignment
+
+log = logging.getLogger(__name__)
 
 NOT_ALLOWED = "이긴 팀과 관전자만 MVP 를 뽑을 수 있습니다."
 NO_WINNER = "아직 결과가 확정되지 않았습니다."
+
+REMATCH_FAILED = {
+    "open": NO_WINNER,
+    "busy": "이미 진행 중인 내전이 있습니다. 그 내전을 끝낸 뒤에 눌러주세요.",
+}
 
 def winners(match):
     return [entry for entry in match.participants if entry.win]
@@ -120,6 +133,36 @@ class RatingView(PersistentView):
             else f"지금 <@{mine}> 에게 투표했습니다. 바꾸려면 다시 고르세요."
         )
         await interaction.response.send_message(note, view=view, ephemeral=True)
+
+    @discord.ui.button(label="팀 그대로", style=discord.ButtonStyle.success, custom_id="again")
+    async def again(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """같은 팀·라인으로 다음 판을 열고, 그동안 쓴 챔피언을 보여준다."""
+        # 챔피언 이름표를 처음 받아올 때는 3초를 넘길 수 있다.
+        await interaction.response.defer(thinking=True)
+
+        async with session_factory() as session:
+            status, match = await create_rematch(session, self.match_id)
+            if match is None:
+                await interaction.followup.send(REMATCH_FAILED[status], ephemeral=True)
+                return
+
+            profiles = await match_profiles(session, match)
+            assignment = {
+                entry.player_id: (entry.team, entry.role)
+                for entry in match.participants
+            }
+            embed = await series_embed(
+                session, match, score_assignment(profiles, assignment)
+            )
+
+        event(
+            log,
+            "rematch_created",
+            match=match.id,
+            previous=self.match_id,
+            by=interaction.user.id,
+        )
+        await interaction.followup.send(embed=embed, view=TeamEditView(match))
 
     @discord.ui.button(label="결과 보기", style=discord.ButtonStyle.secondary, custom_id="show")
     async def show(self, interaction: discord.Interaction, button: discord.ui.Button):
