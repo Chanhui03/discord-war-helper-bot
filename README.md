@@ -20,7 +20,7 @@ cp .env.example .env
 | 항목 | 설명 |
 |---|---|
 | `DISCORD_TOKEN` | [Discord 개발자 포털](https://discord.com/developers/applications)의 봇 토큰 |
-| `RIOT_API_KEY` | [Riot 개발자 포털](https://developer.riotgames.com). 개발용 키는 24시간마다 만료되므로 `/전적등록`이 하루 뒤 실패하면 새로 발급받는다 |
+| `RIOT_API_KEY` | [Riot 개발자 포털](https://developer.riotgames.com). 상시 운영에는 만료되지 않는 Personal 키를 쓴다. 개발용 키는 24시간마다 만료되므로 하루 뒤 `/전적등록`이 실패한다 |
 | `DISCORD_GUILD_ID` | 슬래시 명령을 즉시 등록할 서버 ID. 쉼표로 여러 개. 비우면 전역 등록이라 반영에 최대 1시간 걸린다 |
 | `ANTHROPIC_API_KEY` | `/오더채점`(음성 대본 채점)에만 쓴다. 비워두면 그 명령만 동작하지 않고 나머지는 그대로다 |
 
@@ -339,4 +339,4 @@ venv/bin/alembic revision --autogenerate -m "설명"
 | 기동하자마자 `ValidationError` | `.env`에 `DISCORD_TOKEN` / `RIOT_API_KEY`가 있는지 |
 | 슬래시 명령이 안 보임 | `.env`의 `DISCORD_GUILD_ID`에 해당 서버 ID가 있는지, 봇이 그 서버에 초대됐는지 |
 | 명령이 두 번 응답 | 같은 토큰으로 봇이 두 곳에서 켜져 있다 |
-| `/전적등록`만 실패 | Riot 키 만료. 개발용 키는 24시간마다 갱신해야 한다 |
+| `/전적등록`만 실패 | Riot 키가 만료됐거나 잘못됐다. 개발용 키라면 24시간마다 갱신해야 한다 |
