@@ -1,6 +1,6 @@
 # 내전 도우미
 
-LoL 내전 참가자를 모아 5:5 팀을 자동으로 짜주는 Discord 봇. 내 PC에서 직접 돌린다.
+LoL 내전 참가자를 모아 5:5 팀을 자동으로 짜주는 Discord 봇. GCP Compute Engine 에서 24시간 돌린다.
 
 ## 준비
 
@@ -26,18 +26,60 @@ cp .env.example .env
 
 ## 실행
 
+봇은 GCP Compute Engine e2-micro(인스턴스 `warbot`, `us-central1-a`)에서 systemd
+서비스로 상시 떠 있다. 크래시나 재부팅 뒤에도 자동으로 다시 올라오므로 평소에는
+켜고 끌 일이 없다.
+
+```bash
+gcloud compute ssh warbot --zone=us-central1-a
+```
+
+| 하는 일 | 명령 |
+|---|---|
+| 상태 확인 | `systemctl is-active warbot` |
+| 로그 보기 | `journalctl -u warbot -f` |
+| 재시작 | `sudo systemctl restart warbot` |
+| 멈추기 / 켜기 | `sudo systemctl stop warbot` / `sudo systemctl start warbot` |
+
+로그에 `내전도우미#8506 로그인 완료`가 보이면 성공. Discord에서 `/ping`으로 확인한다.
+
+### 코드 반영
+
+`main`에 push 한 뒤 서버에서 받아 재시작한다.
+
+```bash
+gcloud compute ssh warbot --zone=us-central1-a --command="
+  cd ~/discord-war-helper-bot && git pull --ff-only && sudo systemctl restart warbot"
+```
+
+`.env`는 저장소에 없으므로 값이 바뀌었을 때만 따로 올린다.
+
+```bash
+gcloud compute scp .env warbot:~/discord-war-helper-bot/.env --zone=us-central1-a
+```
+
+### 로컬에서 돌리기
+
+개발할 때만 쓴다.
+
 ```bash
 venv/bin/python -m app.main
 ```
 
-`내전도우미#8506 로그인 완료`가 보이면 성공. Discord에서 `/ping`으로 확인한다.
+**서버 봇이 떠 있는 채로 같은 토큰을 쓰면 명령이 두 번 응답한다.** 서버를 멈추거나
+개발용 봇 토큰을 따로 쓴다.
+
+**DB도 서버와 별개다.** 서버의 `war_helper.db`가 진짜 기록이고, 로컬 파일은 이관
+시점에서 멈춰 있다. 서버 것을 가져오려면:
+
+```bash
+gcloud compute scp warbot:~/discord-war-helper-bot/war_helper.db . --zone=us-central1-a
+```
 
 DB는 저장소 루트의 `war_helper.db`(SQLite) 하나다. 첫 실행 때 자동으로 만들어지고,
 이후 기동할 때마다 스키마를 최신으로 맞춘다(`app/main.py` 의 `migrate()`). 별도 설치가
-필요 없다.
-
-끄려면 `Ctrl+C`. **봇은 이 프로세스가 떠 있는 동안에만 응답한다** — 내전을 할 때 켜두면 된다.
-껐다 켜도 기록은 남고, 진행 중이던 내전의 버튼도 다시 살아난다(`restore_views()`).
+필요 없다. 껐다 켜도 기록은 남고, 진행 중이던 내전의 버튼도 다시 살아난다
+(`restore_views()`).
 
 Discord 공지로 붙여넣을 사용자용 안내는 [discord_notice.md](discord_notice.md) 에 있다.
 
@@ -338,5 +380,6 @@ venv/bin/alembic revision --autogenerate -m "설명"
 |---|---|
 | 기동하자마자 `ValidationError` | `.env`에 `DISCORD_TOKEN` / `RIOT_API_KEY`가 있는지 |
 | 슬래시 명령이 안 보임 | `.env`의 `DISCORD_GUILD_ID`에 해당 서버 ID가 있는지, 봇이 그 서버에 초대됐는지 |
-| 명령이 두 번 응답 | 같은 토큰으로 봇이 두 곳에서 켜져 있다 |
+| 명령이 두 번 응답 | 같은 토큰으로 봇이 두 곳에서 켜져 있다. 서버 봇과 로컬 실행이 겹쳤을 때가 흔하다 |
 | `/전적등록`만 실패 | Riot 키가 만료됐거나 잘못됐다. 개발용 키라면 24시간마다 갱신해야 한다 |
+| 봇이 아무 반응 없음 | 서버에서 `systemctl is-active warbot` 과 `journalctl -u warbot -n 50` 을 본다 |
