@@ -206,8 +206,8 @@ class TestFollowIsAdditive:
         assert with_follow > without
 
     # 전투력을 나머지와 같게 맞춘 오더수행 만점자. 이렇게 해야 밸런스 압력이
-    # 사라져서 '제약이 있는지'만 남는다. (0.40*43.75 + 0.05*100) / 0.45 = 50
-    EQUAL_TIER = 43.75
+    # 사라져서 '제약이 있는지'만 남는다. (0.55*45.45 + 0.05*100) / 0.60 = 50
+    EQUAL_TIER = 25 / 0.55
 
     def balanced_pair(self, **trait):
         players = [

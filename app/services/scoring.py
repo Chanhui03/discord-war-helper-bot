@@ -16,11 +16,18 @@ APEX_LP_RANGE = 1500
 MAX_POINTS = APEX_BASE_POINTS + APEX_LP_RANGE
 
 # 설계서 6장 가중치.
+#
+# 티어를 크게 잡는 이유: 솔랭 승률과 KDA 는 실력의 절대 수준을 재지 못한다.
+# 랭크는 승률이 50% 근처로 수렴하도록 설계돼 있어서, 실버든 마스터든
+# recent_form 은 50 근처에 몰린다. role 도 같은 승률·KDA 에서 나온다.
+# 이 셋에 예전처럼 45% 를 주면 티어 차이가 묻혀 골드가 플래티넘보다 높게
+# 나오는 일이 생긴다. 승률·KDA 는 '자기 티어 안에서의 지금 폼'을 보는
+# 보정으로만 쓰고, 실력의 수준 자체는 티어가 말하게 한다.
 WEIGHTS = {
-    "tier": 0.40,
-    "role": 0.20,
-    "recent_form": 0.15,
-    "performance": 0.10,
+    "tier": 0.55,
+    "role": 0.10,
+    "recent_form": 0.07,
+    "performance": 0.03,
     "custom": 0.10,
     # 내전 판별 평가에서 온 순위. 승률과 달리 밸런서가 지우지 못하는 신호다.
     "internal": 0.10,
@@ -29,14 +36,23 @@ WEIGHTS = {
     "follow": 0.05,
 }
 
-# 설계서 6.1 라인 적합도 배수. avoid 는 사용자가 명시한 기피 라인으로,
-# 비선호(off)보다도 더 불리하게 본다.
-ROLE_MULTIPLIERS = {
-    "main": 1.00,
-    "secondary": 0.85,
-    "off": 0.70,
-    "unknown": 0.60,
-    "avoid": 0.55,
+# 티어를 모를 때(언랭) 쓸 값. 가중치를 재분배해 빼 버리면 남는 요소가
+# 승률·KDA·동료평가뿐이라, 랭크를 안 돌린 사람이 KDA 하나로 마스터와 같은
+# 점수를 받는다. 모르는 것은 빼는 게 아니라 평균으로 둔다.
+UNRANKED_TIER = 50.0
+
+# 설계서 6.1 라인 적합도 감점. 티어 축에서 한 티어가 약 9점이고 종합 점수에는
+# 그 절반쯤 반영되므로, off 8점은 '부라인은 대략 한 티어 반 아래로 본다'는 뜻이다.
+#
+# 배수(×0.70)가 아니라 감점인 이유: 배수는 점수가 높을수록 더 많이 깎는다.
+# 마스터가 부라인에 가면 24점, 실버는 13점이 빠져서, 부라인 마스터가 주라인
+# 플래티넘보다 낮게 나왔다. 라인이 안 맞아 잃는 것은 실력에 비례하지 않는다.
+ROLE_PENALTIES = {
+    "main": 0.0,
+    "secondary": 3.0,
+    "off": 8.0,
+    "unknown": 10.0,
+    "avoid": 12.0,
 }
 
 NEUTRAL = 50.0
@@ -46,9 +62,12 @@ NEUTRAL = 50.0
 TRAIT_MIN_VOTES = 1
 # 내전을 이만큼 치르면 주관 지표는 힘을 잃고 실제 기록에 자리를 넘긴다.
 TRAIT_FADE_GAMES = 10
-# 솔랭 지표가 내전 지표에 자리를 넘기는 판수. 주관 지표가 빠지는 시점과 같다.
-# 내전을 충분히 치른 사람은 솔랭 티어보다 내전에서 실제로 한 것이 잘 설명한다.
-TAKEOVER_GAMES = TRAIT_FADE_GAMES
+# 솔랭 지표가 내전 지표에 자리를 넘기는 판수.
+TAKEOVER_GAMES = 20
+# 내전 기록이 아무리 쌓여도 솔랭 지표에서 이만큼까지만 가져간다. 1.0 으로 두면
+# 20판째에 티어가 통째로 사라지는데, 그러면 남는 것이 내전 승률과 평균 순위뿐이라
+# 밸런싱이 잘될수록 모두가 50 으로 수렴해 챌린저와 실버가 같은 점수가 된다.
+TAKEOVER_MAX = 0.6
 
 # 내전 밖에서 온 지표. 판수가 쌓이면 이 넷의 가중치가 함께 줄어든다.
 SOLO_COMPONENTS = ("tier", "role", "recent_form", "performance")
@@ -218,10 +237,12 @@ def base_score(
     비율만 의미가 있다.
 
     takeover 는 0~1 로, 솔랭에서 온 지표의 힘을 얼마나 뺄지다. 내전 판수가
-    쌓일수록 1 에 가까워져 티어·라인·최근폼·KDA 가 물러나고 내전 기록만 남는다.
+    쌓일수록 티어·라인·최근폼·KDA 가 물러나고 내전 기록이 앞에 선다. 다만
+    takeover_of 가 TAKEOVER_MAX 에서 멈추므로 티어가 통째로 사라지지는 않는다.
     """
     components = {
-        "tier": tier,
+        # 언랭이어도 가중치를 재분배하지 않는다(UNRANKED_TIER 주석 참고).
+        "tier": UNRANKED_TIER if tier is None else tier,
         "role": role,
         "recent_form": recent_form,
         "performance": performance,
@@ -271,14 +292,19 @@ def role_power(
     secondary_role: Optional[str],
     avoid_role: Optional[str] = None,
 ) -> float:
-    """기본 점수에 라인 적합도 배수를 적용한다(설계서 6.1)."""
-    return score * ROLE_MULTIPLIERS[
+    """기본 점수에서 라인 적합도만큼 깎는다(설계서 6.1)."""
+    penalty = ROLE_PENALTIES[
         role_affinity(role, main_role, secondary_role, avoid_role)
     ]
+    return max(score - penalty, 0.0)
 
 def takeover_of(custom_games: int) -> float:
-    """내전 판수로 본 전환 진행도. 0 이면 솔랭 지표 그대로, 1 이면 내전만."""
-    return min(custom_games / TAKEOVER_GAMES, 1.0)
+    """내전 판수로 본 전환 진행도. 0 이면 솔랭 지표 그대로.
+
+    다 채워도 TAKEOVER_MAX 까지만 간다. 내전 기록이 티어를 밀어내되 지우지는
+    못하게 해서, 판수가 쌓인 뒤에도 실력 차이가 남는다.
+    """
+    return min(custom_games / TAKEOVER_GAMES, 1.0) * TAKEOVER_MAX
 
 def rank_score(average: Optional[float], games: int, team_size: int = 5) -> Optional[float]:
     """내전 판별 평가의 평균 순위를 0~100 으로. 기록이 없으면 None.

@@ -108,7 +108,7 @@ def aggregate_matches(matches: List[Dict[str, Any]], puuid: str) -> Dict[str, An
     }
 
 def profile_score(profile: PlayerProfile, custom_games: int = 0) -> float:
-    """스냅샷 하나의 종합 점수. 라인 배수를 곱하기 전 값이다.
+    """스냅샷 하나의 종합 점수. 라인 감점을 빼기 전 값이다.
 
     밸런싱이 쓰는 power_of 와 같은 요소·같은 전환을 쓴다. 표시용으로 따로
     계산하면 화면에 뜬 점수와 실제로 팀을 가르는 점수가 어긋난다.

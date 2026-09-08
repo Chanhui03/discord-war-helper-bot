@@ -3,12 +3,15 @@ import pytest
 from app.services.scoring import (
     APEX_LP_RANGE,
     NEUTRAL,
+    TAKEOVER_GAMES,
+    TAKEOVER_MAX,
     base_score,
     custom_score,
     performance_score,
     role_affinity,
     role_power,
     role_score,
+    takeover_of,
     tier_score,
 )
 
@@ -89,8 +92,8 @@ class TestBaseScore:
         assert base_score(tier=80.0) == 80.0
 
     def test_missing_weights_are_redistributed(self):
-        # tier 40% + role 20% -> 재정규화하면 2:1 가중 평균
-        assert base_score(tier=90.0, role=60.0) == pytest.approx(80.0)
+        # tier 55% + role 10% -> 재정규화하면 11:2 가중 평균
+        assert base_score(tier=90.0, role=25.0) == pytest.approx(80.0)
 
     def test_all_equal_components_give_that_value(self):
         assert base_score(
@@ -102,6 +105,29 @@ class TestBaseScore:
         tier_heavy = base_score(tier=100.0, role=0.0)
         role_heavy = base_score(tier=0.0, role=100.0)
         assert tier_heavy > role_heavy
+
+    def test_unranked_does_not_hand_its_weight_to_kda(self):
+        """언랭이라고 티어 가중치를 빼면 KDA 하나로 마스터급 점수가 나온다."""
+        unranked = base_score(performance=100.0, recent_form=60.0)
+        assert unranked == pytest.approx(
+            base_score(tier=NEUTRAL, performance=100.0, recent_form=60.0)
+        )
+        assert unranked < base_score(tier=75.0, performance=100.0, recent_form=60.0)
+
+class TestTakeover:
+    def test_internal_record_never_erases_the_tier(self):
+        """판수가 아무리 쌓여도 챌린저와 아이언이 같은 점수가 되면 안 된다."""
+        full = takeover_of(TAKEOVER_GAMES * 5)
+        assert full == pytest.approx(TAKEOVER_MAX) and full < 1.0
+
+        high = base_score(tier=100.0, custom=NEUTRAL, internal=NEUTRAL, takeover=full)
+        low = base_score(tier=0.0, custom=NEUTRAL, internal=NEUTRAL, takeover=full)
+        assert high - low > 10.0
+
+    def test_it_still_moves_weight_toward_the_internal_record(self):
+        rookie = base_score(tier=100.0, custom=0.0, takeover=takeover_of(0))
+        veteran = base_score(tier=100.0, custom=0.0, takeover=takeover_of(TAKEOVER_GAMES))
+        assert veteran < rookie
 
 class TestRoleAffinity:
     def test_unset_preferences_are_unknown(self):
@@ -123,19 +149,28 @@ class TestRoleAffinity:
 
 class TestRolePower:
     def test_design_document_worked_example(self):
-        """설계서 6.1: 기본 80 -> 주라인 ADC 80, 부라인 MID 68, 비선호 TOP 56."""
+        """설계서 6.1: 기본 80 -> 주라인 ADC 80, 부라인 MID 77, 비선호 TOP 72."""
         assert role_power(80.0, "ADC", "ADC", "MID") == pytest.approx(80.0)
-        assert role_power(80.0, "MID", "ADC", "MID") == pytest.approx(68.0)
-        assert role_power(80.0, "TOP", "ADC", "MID") == pytest.approx(56.0)
+        assert role_power(80.0, "MID", "ADC", "MID") == pytest.approx(77.0)
+        assert role_power(80.0, "TOP", "ADC", "MID") == pytest.approx(72.0)
 
-    def test_unknown_preference_uses_lowest_multiplier(self):
-        assert role_power(80.0, "TOP", None, None) == pytest.approx(48.0)
+    def test_unknown_preference_is_penalised_more_than_off_role(self):
+        assert role_power(80.0, "TOP", None, None) == pytest.approx(70.0)
 
     def test_avoided_role_is_worse_than_off_role(self):
         avoided = role_power(80.0, "JUNGLE", "MID", "TOP", "JUNGLE")
         off = role_power(80.0, "ADC", "MID", "TOP", "JUNGLE")
-        assert avoided == pytest.approx(44.0)  # 80 * 0.55
-        assert avoided < off == pytest.approx(56.0)
+        assert avoided == pytest.approx(68.0)  # 80 - 12
+        assert avoided < off == pytest.approx(72.0)
+
+    def test_penalty_does_not_depend_on_how_good_you_are(self):
+        """부라인에서 잃는 점수는 실력에 비례하지 않는다. 배수를 버린 이유다."""
+        strong = role_power(80.0, "TOP", "MID", None) - role_power(80.0, "MID", "MID", None)
+        weak = role_power(40.0, "TOP", "MID", None) - role_power(40.0, "MID", "MID", None)
+        assert strong == pytest.approx(weak)
+
+    def test_never_goes_below_zero(self):
+        assert role_power(5.0, "TOP", "MID", "ADC", "TOP") == 0.0
 
 class TestCustomScore:
     def test_no_custom_games_returns_none(self):
