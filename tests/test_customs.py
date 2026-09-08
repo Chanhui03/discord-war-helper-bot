@@ -19,6 +19,8 @@ def row(role, games, **overrides):
         gold=400 * 30 * games,
         cs=9 * 30 * games,
         wards=10 * games,
+        # 우리 팀 킬 합. 내 킬 4 + 어시 5 = 9 이므로 관여율 60% 가 된다.
+        team_kills=15 * games,
         seconds=1800 * games,
     )
     base.update(overrides)
@@ -36,7 +38,9 @@ def test_header_comes_first_then_the_total_then_each_line():
     embed = stats_embed(PLAYER, [row("MID", 6), row("TOP", 2)], {})
     basic, detail = blocks(embed)
 
-    assert basic[0].split() == ["라인", "경기", "승", "패", "승률", "KDA", "킬", "데스", "어시"]
+    assert basic[0].split() == [
+        "라인", "경기", "승", "패", "승률", "KDA", "관여", "킬", "데스", "어시"
+    ]
     assert [line.split()[0] for line in basic] == ["라인", "전체", "미드", "탑"]
     assert detail[0].split() == ["라인", "DPM", "DTPM", "GPM", "CSPM", "DPGR", "첫킬", "첫포탑", "와드"]
     assert [line.split()[0] for line in detail] == ["라인", "전체", "미드", "탑"]
@@ -47,6 +51,12 @@ def test_total_row_sums_every_line():
     total = basic[1].split()
 
     assert total[1:5] == ["8", "4", "4", "50.0%"]
+
+def test_kill_participation_uses_team_kills_not_games():
+    """(킬+어시) / 우리 팀 총킬. 판수로 나누면 롱겜에서 100% 를 넘는다."""
+    embed = stats_embed(PLAYER, [row("MID", 6), row("TOP", 2)], {})
+    basic, _ = blocks(embed)
+    assert basic[1].split()[6] == "60.0%"
 
 def test_columns_line_up_in_the_monospace_block():
     embed = stats_embed(PLAYER, [row("MID", 6), row("SUPPORT", 2)], {})
@@ -69,16 +79,19 @@ def test_numbers_match_the_opgg_style_row():
         gold=560_604,
         cs=12_118,
         wards=563,
+        team_kills=580,
         seconds=1800 * 44,
     )
     basic, detail = blocks(stats_embed(PLAYER, [sample], {}))
 
-    assert basic[2].split() == ["미드", "44", "16", "28", "36.4%", "3.79", "4.3", "2.4", "5.0"]
+    assert basic[2].split() == [
+        "미드", "44", "16", "28", "36.4%", "3.79", "70.0%", "4.3", "2.4", "5.0"
+    ]
     # DPGR 은 DPM / GPM (골드 대비 딜 가성비).
     assert detail[2].split() == ["미드", "708.3", "602.4", "424.7", "9.18", "1.67", "13.6%", "20.5%", "12.8"]
 
 def test_every_summed_column_is_used():
     assert set(SUMS) == {
         "games", "wins", "kills", "deaths", "assists", "first_blood", "first_tower",
-        "damage", "damage_taken", "gold", "cs", "wards", "seconds",
+        "damage", "damage_taken", "gold", "cs", "wards", "team_kills", "seconds",
     }

@@ -2,6 +2,7 @@ from collections import Counter
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.match import (
@@ -444,6 +445,17 @@ async def custom_position_stats(
     합친 '전체' 행도 같은 계산으로 만들기 위해서다.
     """
     position = func.coalesce(MatchPlayer.played_role, MatchPlayer.role).label("role")
+    # 킬관여율의 분모. 같은 경기·같은 팀의 킬을 모두 더한다. 이 값을 따로 저장하지
+    # 않는 이유는 참가자 10명이 이미 다 들어 있어 언제든 셀 수 있기 때문이다.
+    teammate = aliased(MatchPlayer)
+    team_kills = (
+        select(func.coalesce(func.sum(teammate.kills), 0))
+        .where(
+            teammate.match_id == MatchPlayer.match_id,
+            teammate.team == MatchPlayer.team,
+        )
+        .scalar_subquery()
+    )
     result = await session.execute(
         select(
             position,
@@ -459,6 +471,7 @@ async def custom_position_stats(
             func.sum(MatchPlayer.gold).label("gold"),
             func.sum(MatchPlayer.cs).label("cs"),
             func.sum(MatchPlayer.wards).label("wards"),
+            func.sum(team_kills).label("team_kills"),
             func.sum(Match.duration).label("seconds"),
         )
         .join(Match, Match.id == MatchPlayer.match_id)

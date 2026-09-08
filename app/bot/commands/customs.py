@@ -12,11 +12,11 @@ from app.traits import summary
 # 합계 컬럼. 전체 행은 라인별 행을 이 항목들로 더해서 만든다.
 SUMS = (
     "games", "wins", "kills", "deaths", "assists", "first_blood", "first_tower",
-    "damage", "damage_taken", "gold", "cs", "wards", "seconds",
+    "damage", "damage_taken", "gold", "cs", "wards", "team_kills", "seconds",
 )
 
 BASIC = (("라인", 4), ("경기", 6), ("승", 4), ("패", 4), ("승률", 8), ("KDA", 6),
-         ("킬", 6), ("데스", 6), ("어시", 6))
+         ("관여", 7), ("킬", 6), ("데스", 6), ("어시", 6))
 DETAIL = (("라인", 4), ("DPM", 8), ("DTPM", 8), ("GPM", 8), ("CSPM", 6),
           ("DPGR", 6), ("첫킬", 7), ("첫포탑", 8), ("와드", 6))
 
@@ -48,6 +48,8 @@ def basic_cells(label: str, total: dict):
         f"{games - total['wins']}",
         f"{total['wins'] / games:.1%}",
         f"{kda:.2f}",
+        # 킬관여율: 우리 팀 킬 중 내가 킬이나 어시로 낀 비율.
+        f"{(total['kills'] + total['assists']) / max(total['team_kills'], 1):.1%}",
         f"{total['kills'] / games:.1f}",
         f"{total['deaths'] / games:.1f}",
         f"{total['assists'] / games:.1f}",
