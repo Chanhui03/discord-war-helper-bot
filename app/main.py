@@ -1,3 +1,5 @@
+import logging
+
 from alembic import command
 from alembic.config import Config
 
@@ -10,6 +12,9 @@ def migrate() -> None:
 
 def main() -> None:
     migrate()
+    # migrate() 가 root 에 붙인 alembic 콘솔 핸들러를 걷는다. 그대로 두면
+    # discord.py 가 붙이는 핸들러와 겹쳐 모든 줄이 두 번 찍힌다.
+    logging.getLogger().handlers.clear()
     bot = WarBot()
     bot.run(settings.discord_token, root_logger=True)
 
