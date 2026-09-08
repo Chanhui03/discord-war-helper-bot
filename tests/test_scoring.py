@@ -2,21 +2,21 @@ import pytest
 
 from app.services.scoring import (
     APEX_LP_RANGE,
+    INTERNAL_ADJUST,
     MMR_ADJUST,
     MMR_K,
     MMR_SPAN,
     MMR_START,
     NEUTRAL,
-    TAKEOVER_GAMES,
-    TAKEOVER_MAX,
+    adjustment,
     base_score,
+    mastery_score,
     mmr_adjustment,
     performance_score,
+    rate_matches,
     role_affinity,
     role_power,
-    rate_matches,
     role_score,
-    takeover_of,
     tier_score,
 )
 
@@ -101,9 +101,9 @@ class TestBaseScore:
         assert base_score(tier=90.0, role=25.0) == pytest.approx(80.0)
 
     def test_all_equal_components_give_that_value(self):
+        # 평균에 들어가는 넷만. 나머지는 더해지는 값이라 여기 오지 않는다.
         assert base_score(
-            tier=70.0, role=70.0, recent_form=70.0,
-            performance=70.0, internal=70.0, mastery=70.0,
+            tier=70.0, role=70.0, recent_form=70.0, performance=70.0
         ) == pytest.approx(70.0)
 
     def test_tier_dominates_role(self):
@@ -119,20 +119,42 @@ class TestBaseScore:
         )
         assert unranked < base_score(tier=75.0, performance=100.0, recent_form=60.0)
 
-class TestTakeover:
-    def test_internal_record_never_erases_the_tier(self):
-        """판수가 아무리 쌓여도 챌린저와 아이언이 같은 점수가 되면 안 된다."""
-        full = takeover_of(TAKEOVER_GAMES * 5)
-        assert full == pytest.approx(TAKEOVER_MAX) and full < 1.0
+class TestInternalAdjustments:
+    """내전에서 온 지표는 평균에 섞이지 않고 더해진다."""
 
-        high = base_score(tier=100.0, internal=NEUTRAL, mastery=NEUTRAL, takeover=full)
-        low = base_score(tier=0.0, internal=NEUTRAL, mastery=NEUTRAL, takeover=full)
-        assert high - low > 10.0
+    def test_no_record_changes_nothing(self):
+        assert base_score(tier=80.0, internal=None, mastery=None, follow=None) == 80.0
 
-    def test_it_still_moves_weight_toward_the_internal_record(self):
-        rookie = base_score(tier=100.0, internal=0.0, takeover=takeover_of(0))
-        veteran = base_score(tier=100.0, internal=0.0, takeover=takeover_of(TAKEOVER_GAMES))
-        assert veteran < rookie
+    def test_being_neutral_is_the_same_as_having_no_record(self):
+        assert base_score(tier=80.0, internal=NEUTRAL) == base_score(tier=80.0)
+
+    def test_internal_rank_moves_both_ways(self):
+        assert base_score(tier=80.0, internal=100.0) == pytest.approx(
+            80.0 + INTERNAL_ADJUST
+        )
+        assert base_score(tier=80.0, internal=0.0) == pytest.approx(
+            80.0 - INTERNAL_ADJUST
+        )
+
+    def test_it_lifts_every_tier_by_the_same_amount(self):
+        """가중 평균에 섞었을 때는 잘하는 사람이 오히려 내려갔다."""
+        gains = [
+            base_score(tier=t, internal=100.0, mastery=100.0, follow=100.0)
+            - base_score(tier=t)
+            for t in (20.0, 40.0, 60.0)
+        ]
+        assert gains[0] == pytest.approx(gains[1]) == pytest.approx(gains[2])
+        assert gains[0] > 0
+
+    def test_champion_pool_and_follow_only_add(self):
+        """둘은 1~10 평가라 중립 아래로 내려가지 않는다. 깎이지 않는다."""
+        assert base_score(tier=60.0, mastery=100.0, follow=100.0) > 60.0
+        assert mastery_score(50.0, None, 0, 0) == NEUTRAL
+        assert adjustment(NEUTRAL, 5.0) == 0.0
+
+    def test_the_score_stays_in_range(self):
+        assert base_score(tier=99.0, internal=100.0, mastery=100.0, follow=100.0) == 100.0
+        assert base_score(tier=1.0, internal=0.0, mmr=0.0) == 0.0
 
 class TestRoleAffinity:
     def test_unset_preferences_are_unknown(self):

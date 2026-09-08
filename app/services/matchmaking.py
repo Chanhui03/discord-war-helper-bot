@@ -55,8 +55,6 @@ class PlayerProfile:
     # 직전 내전에서 기피 라인을 갔다면 이번에는 기피 라인 배정을 금지한다.
     must_avoid: bool
     role_scores: Dict[str, float]
-    # 솔랭 지표가 내전 지표에 자리를 넘긴 정도(0~1). 내전 판수에서 온다.
-    takeover: float = 0.0
     # 서버 인원이 매긴 주관 지표. 반영할 수 없으면 None.
     mastery: Optional[float] = None
     # 메인오더. 팀당 한 명이면 되는 배타적 자원이라 점수에 더하지 않고 제약으로 쓴다.
@@ -97,7 +95,6 @@ def power_of(profile: PlayerProfile, role: str) -> float:
             internal=profile.internal,
             mastery=profile.mastery,
             follow=profile.follow,
-            takeover=profile.takeover,
         ),
         role,
         profile.main_role,

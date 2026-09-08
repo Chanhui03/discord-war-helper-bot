@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.services.scoring import MMR_START, TAKEOVER_GAMES
+from app.services.scoring import MMR_START
 from app.services.stats import (
     MATCH_CONCURRENCY,
     STATS_TTL,
@@ -130,11 +130,11 @@ class TestProfileScore:
         with_customs = profile_score(self.profile(tier=60.0, mmr=MMR_START + 200))
         assert with_customs > without
 
-    def test_internal_rank_takes_over_after_enough_games(self):
-        built = self.profile(tier=95.0, internal=10.0)
-        early = profile_score(built, custom_games=0)
-        late = profile_score(built, custom_games=TAKEOVER_GAMES)
-        assert late < early, "내전 판수가 쌓여도 솔랭 티어가 그대로 남았다"
+    def test_internal_rank_pulls_a_high_tier_down(self):
+        """티어가 높아도 내전에서 계속 꼴찌면 점수가 내려간다."""
+        assert profile_score(self.profile(tier=95.0, internal=10.0)) < profile_score(
+            self.profile(tier=95.0)
+        )
 
 class TestFetchMatches:
     def test_preserves_order_and_caps_concurrency(self):

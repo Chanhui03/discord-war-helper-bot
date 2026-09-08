@@ -15,7 +15,9 @@ APEX_BASE_POINTS = len(TIER_ORDER) * 400  # 2800
 APEX_LP_RANGE = 1500
 MAX_POINTS = APEX_BASE_POINTS + APEX_LP_RANGE
 
-# 설계서 6장 가중치.
+# 설계서 6장 가중치. 여기 있는 넷은 '실력의 절대 수준'을 재는 축이라 가중 평균을
+# 낸다. 내전에서 온 지표(MMR·판별 순위·챔피언폭·오더수행)는 중립이 0 인 보정항이라
+# 평균에 섞지 않고 결과에 더한다(MMR_ADJUST 주석 참고).
 #
 # 티어를 크게 잡는 이유: 솔랭 승률과 KDA 는 실력의 절대 수준을 재지 못한다.
 # 랭크는 승률이 50% 근처로 수렴하도록 설계돼 있어서, 실버든 마스터든
@@ -28,11 +30,6 @@ WEIGHTS = {
     "role": 0.10,
     "recent_form": 0.07,
     "performance": 0.03,
-    # 내전 판별 평가에서 온 순위. 승률과 달리 밸런서가 지우지 못하는 신호다.
-    "internal": 0.10,
-    "mastery": 0.05,
-    # 오더수행. 많을수록 좋은 가산 자원이라 그냥 더한다(메인오더와 반대).
-    "follow": 0.05,
 }
 
 # 티어를 모를 때(언랭) 쓸 값. 가중치를 재분배해 빼 버리면 남는 요소가
@@ -76,21 +73,23 @@ MMR_SPAN = 400.0
 # 50 쪽으로 내려가고 못하는 사람은 올라간다. 실제로 5연승한 마스터의 점수가
 # 72.8 에서 70.6 으로 내려갔다.
 MMR_ADJUST = 15.0
+# 내전 판별 평가 순위의 가산폭. 팀에서 늘 1등이면 +12, 늘 꼴찌면 -12 다.
+# 승패보다 한 단계 낮게 잡은 것은 MMR 이 '이겼다'는 사실에서 오는 반면 이쪽은
+# AI 판단이기 때문이다. 대신 밸런서가 팀을 잘 맞출수록 사라지는 MMR 과 달리
+# 이 신호는 팀이 아무리 균형 잡혀도 사람을 계속 가른다. 둘이 서로를 메운다.
+INTERNAL_ADJUST = 12.0
+# 챔피언폭과 오더수행의 가산폭. 둘 다 깎이지 않고 위로만 붙는 가산 자원이다.
+MASTERY_ADJUST = 5.0
+FOLLOW_ADJUST = 5.0
 
 # 주관 지표(오더능력·챔피언폭)를 반영하기 위한 최소 평가 인원. 서로 아는 인원이
 # 많지 않아 한 명만 매겨도 초기값으로 쓴다.
 TRAIT_MIN_VOTES = 1
 # 내전을 이만큼 치르면 주관 지표는 힘을 잃고 실제 기록에 자리를 넘긴다.
 TRAIT_FADE_GAMES = 10
-# 솔랭 지표가 내전 지표에 자리를 넘기는 판수.
-TAKEOVER_GAMES = 20
-# 내전 기록이 아무리 쌓여도 솔랭 지표에서 이만큼까지만 가져간다. 1.0 으로 두면
-# 20판째에 티어가 통째로 사라지는데, 그러면 남는 것이 내전 승률과 평균 순위뿐이라
-# 밸런싱이 잘될수록 모두가 50 으로 수렴해 챌린저와 실버가 같은 점수가 된다.
-TAKEOVER_MAX = 0.6
-
-# 내전 밖에서 온 지표. 판수가 쌓이면 이 넷의 가중치가 함께 줄어든다.
-SOLO_COMPONENTS = ("tier", "role", "recent_form", "performance")
+# 내전 판수가 쌓이면 솔랭 지표가 물러나야 하지만, 따로 전환 장치를 두지 않는다.
+# 가산항이 알아서 그 일을 한다. 판이 쌓일수록 MMR 은 시작값에서 멀어지고 판별
+# 평가의 신뢰도가 차올라 보정폭이 커지는 반면, 솔랭 평균은 제자리에 있다.
 
 # 챔피언폭을 셀 때 주력으로 인정할 숙련도 비율. 가장 많이 판 챔피언의 이만큼은
 # 되어야 저격밴을 맞았을 때 대신 꺼낼 수 있다고 본다.
@@ -249,18 +248,15 @@ def base_score(
     mastery: Optional[float] = None,
     follow: Optional[float] = None,
     mmr: Optional[float] = None,
-    takeover: float = 0.0,
 ) -> float:
-    """제공된 요소만으로 가중 평균을 낸다. 없는 요소의 가중치는 나머지에 재분배된다.
+    """솔랭 지표로 가중 평균을 내고, 내전에서 온 보정을 더한다.
 
-    가중치는 합이 1 일 필요가 없다. 있는 요소들끼리 다시 정규화하므로 상대
-    비율만 의미가 있다.
+    앞의 넷(티어·라인·최근폼·KDA)만 평균에 들어간다. 없는 요소의 가중치는
+    나머지에 재분배되며, 가중치는 합이 1 일 필요 없이 상대 비율만 의미가 있다.
 
-    mmr 은 내전 MMR 로, 평균에 섞이지 않고 결과에 더해진다.
-
-    takeover 는 0~1 로, 솔랭에서 온 지표의 힘을 얼마나 뺄지다. 내전 판수가
-    쌓일수록 티어·라인·최근폼·KDA 가 물러나고 내전 기록이 앞에 선다. 다만
-    takeover_of 가 TAKEOVER_MAX 에서 멈추므로 티어가 통째로 사라지지는 않는다.
+    뒤의 넷(판별 순위·챔피언폭·오더수행·MMR)은 중립이 0 인 보정항이라 더한다.
+    이것들은 '실력의 절대 수준'이 아니라 '솔랭 지표가 틀린 만큼'을 재기 때문에,
+    평균에 섞으면 기록과 무관하게 잘하는 사람을 끌어내리고 못하는 사람을 올린다.
     """
     components = {
         # 언랭이어도 가중치를 재분배하지 않는다(UNRANKED_TIER 주석 참고).
@@ -268,28 +264,24 @@ def base_score(
         "role": role,
         "recent_form": recent_form,
         "performance": performance,
-        "internal": internal,
-        "mastery": mastery,
-        "follow": follow,
     }
+    # 티어는 언랭이어도 값이 있으므로 available 이 비는 일은 없다.
     available = {k: v for k, v in components.items() if v is not None}
-    if not available:
-        return NEUTRAL + mmr_adjustment(mmr)
+    average = sum(WEIGHTS[k] * v for k, v in available.items()) / sum(
+        WEIGHTS[key] for key in available
+    )
 
-    weights = {
-        key: WEIGHTS[key] * (1.0 - takeover if key in SOLO_COMPONENTS else 1.0)
-        for key in available
-    }
-    total_weight = sum(weights.values())
-    # 내전 지표가 하나도 없는데 솔랭 지표를 다 빼면 남는 게 없다. 그럴 때는
-    # 넘겨줄 곳이 없다는 뜻이므로 전환하지 않는다.
-    if total_weight <= 0:
-        weights = {key: WEIGHTS[key] for key in available}
-        total_weight = sum(weights.values())
-
-    average = sum(weights[k] * v for k, v in available.items()) / total_weight
-    # 내전 MMR 은 평균에 섞지 않고 더한다(MMR_ADJUST 주석 참고).
-    return min(max(average + mmr_adjustment(mmr), 0.0), 100.0)
+    return min(
+        max(
+            average
+            + adjustment(internal, INTERNAL_ADJUST)
+            + adjustment(mastery, MASTERY_ADJUST)
+            + adjustment(follow, FOLLOW_ADJUST)
+            + mmr_adjustment(mmr),
+            0.0,
+        ),
+        100.0,
+    )
 
 def role_affinity(
     role: str,
@@ -321,13 +313,16 @@ def role_power(
     ]
     return max(score - penalty, 0.0)
 
-def takeover_of(custom_games: int) -> float:
-    """내전 판수로 본 전환 진행도. 0 이면 솔랭 지표 그대로.
+def adjustment(value: Optional[float], span: float) -> float:
+    """0~100 짜리 보정 지표를 중립(50) 기준 ±span 점의 가산분으로 바꾼다.
 
-    다 채워도 TAKEOVER_MAX 까지만 간다. 내전 기록이 티어를 밀어내되 지우지는
-    못하게 해서, 판수가 쌓인 뒤에도 실력 차이가 남는다.
+    쓸 수 없으면(None) 0 이다. 예전에는 가중치를 재분배해 뺐는데, 그러면 값이
+    없는 사람과 정확히 중립인 사람이 다르게 취급됐다. 지금은 둘 다 0 이다.
     """
-    return min(custom_games / TAKEOVER_GAMES, 1.0) * TAKEOVER_MAX
+    if value is None:
+        return 0.0
+
+    return (value - NEUTRAL) / NEUTRAL * span
 
 def rank_score(average: Optional[float], games: int, team_size: int = 5) -> Optional[float]:
     """내전 판별 평가의 평균 순위를 0~100 으로. 기록이 없으면 None.

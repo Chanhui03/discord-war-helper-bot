@@ -68,8 +68,7 @@ class Profile(commands.Cog):
                 traits=traits,
                 recorded_call=calls.get(player.id, (None, 0))[0],
                 ranks=ranks.get(player.id),
-            ),
-            custom_games,
+            )
         )
 
         rank = (

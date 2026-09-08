@@ -12,12 +12,14 @@ from app.services.matchmaking import (
     top_callers,
 )
 from app.services.scoring import (
+    FOLLOW_ADJUST,
     NEUTRAL,
     POOL_FULL,
     POOL_MIN_POINTS,
     POOL_SEASON_GAMES,
     TRAIT_FADE_GAMES,
     TRAIT_MIN_VOTES,
+    WEIGHTS,
     champion_pool_score,
     mastery_score,
     trait_score,
@@ -206,8 +208,12 @@ class TestFollowIsAdditive:
         assert with_follow > without
 
     # 전투력을 나머지와 같게 맞춘 오더수행 만점자. 이렇게 해야 밸런스 압력이
-    # 사라져서 '제약이 있는지'만 남는다. (0.55*45.45 + 0.05*100) / 0.60 = 50
-    EQUAL_TIER = 25 / 0.55
+    # 사라져서 '제약이 있는지'만 남는다. 오더수행은 이제 가산항이라, 만점이
+    # 얹어 주는 FOLLOW_ADJUST 점만큼 티어를 낮춰 상쇄한다. profile() 이 채우는
+    # 평균 항은 티어·최근폼·KDA 셋이고, 그중 티어만 여기서 움직인다.
+    EQUAL_TIER = NEUTRAL - FOLLOW_ADJUST * (
+        WEIGHTS["tier"] + WEIGHTS["recent_form"] + WEIGHTS["performance"]
+    ) / WEIGHTS["tier"]
 
     def balanced_pair(self, **trait):
         players = [
