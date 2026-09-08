@@ -67,6 +67,13 @@ class MatchPlayer(Base):
     damage_taken: Mapped[Optional[int]] = mapped_column(Integer)
     gold: Mapped[Optional[int]] = mapped_column(Integer)
     wards: Mapped[Optional[int]] = mapped_column(Integer)
+    # 시야점수. 설치한 와드만 세는 wards 와 달리 제거·유지 시간까지 반영한다.
+    vision_score: Mapped[Optional[int]] = mapped_column(Integer)
+    wards_killed: Mapped[Optional[int]] = mapped_column(Integer)
+    # 오브젝트에 넣은 딜과 상대를 묶어 둔 시간(초). 탱커·서폿의 기여는 KDA 로
+    # 잡히지 않아 따로 남긴다.
+    objective_damage: Mapped[Optional[int]] = mapped_column(Integer)
+    cc_time: Mapped[Optional[int]] = mapped_column(Integer)
     first_blood: Mapped[Optional[bool]] = mapped_column(Boolean)
     first_tower: Mapped[Optional[bool]] = mapped_column(Boolean)
     # 실제로 간 라인. 배정(role)과 다를 수 있어 따로 남긴다.

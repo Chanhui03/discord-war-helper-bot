@@ -138,6 +138,24 @@ def test_detailed_stats_are_read():
     assert record.wards == 13
     assert (record.first_blood, record.first_tower) == (True, False)
 
+def test_vision_and_objective_stats_are_read():
+    """탱커·서폿 기여. KDA 로는 잡히지 않아 따로 남긴다."""
+    _, record = one_record(
+        visionScore=182,
+        wardsKilled=25,
+        damageDealtToObjectives=1123,
+        timeCCingOthers=82,
+    )
+
+    assert (record.vision_score, record.wards_killed) == (182, 25)
+    assert (record.objective_damage, record.cc_time) == (1123, 82)
+
+def test_old_client_records_without_the_new_fields_read_as_zero():
+    """구 클라이언트 기록에는 timeCCingOthers 가 없다. 없으면 0 이다."""
+    _, record = one_record()
+    assert (record.vision_score, record.wards_killed) == (0, 0)
+    assert (record.objective_damage, record.cc_time) == (0, 0)
+
 def test_game_duration_is_kept():
     parsed, _ = one_record()
     assert parsed.duration == 1800
@@ -183,6 +201,15 @@ def test_real_files_are_read_as_ten_player_customs():
     assert (second.game_id, second.duration) == (8356275485, 1513)
     assert len(first.participants) == len(second.participants) == 10
 
+
+def test_a_real_support_stands_out_in_vision_not_kda():
+    """실제 파일에서 서폿과 정글이 시야·오브젝트딜로 갈리는지 본다."""
+    by_id = real_game("first_custom_matches.json").by_riot_id()
+    support = by_id[riot_id_key("fletid", "502")]
+    jungler = by_id[riot_id_key("룬숭이", "KR1")]
+
+    assert support.vision_score > jungler.vision_score * 3
+    assert jungler.objective_damage > support.objective_damage * 10
 
 def test_a_real_support_is_not_read_as_an_adc():
     """이 클라이언트는 서폿 role 을 SUPPORT 로 준다 (DUO_SUPPORT 가 아니다)."""

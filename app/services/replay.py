@@ -38,6 +38,10 @@ class ParticipantRecord:
     damage_taken: int
     gold: int
     wards: int
+    vision_score: int
+    wards_killed: int
+    objective_damage: int
+    cc_time: int
     first_blood: bool
     first_tower: bool
     # 실제로 간 라인. 읽을 수 없으면 None.
@@ -101,6 +105,11 @@ def _participants(game: Dict[str, Any]) -> Tuple[ParticipantRecord, ...]:
                 damage_taken=stats.get("totalDamageTaken", 0),
                 gold=stats.get("goldEarned", 0),
                 wards=stats.get("wardsPlaced", 0),
+                vision_score=stats.get("visionScore", 0),
+                wards_killed=stats.get("wardsKilled", 0),
+                objective_damage=stats.get("damageDealtToObjectives", 0),
+                # 초 단위. 구 클라이언트 기록에는 없어 0 으로 남는다.
+                cc_time=stats.get("timeCCingOthers", 0),
                 first_blood=bool(stats.get("firstBloodKill")),
                 first_tower=bool(stats.get("firstTowerKill")),
                 position=position_of(participant.get("timeline", {})),

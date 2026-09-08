@@ -471,6 +471,14 @@ async def custom_position_stats(
             func.sum(MatchPlayer.gold).label("gold"),
             func.sum(MatchPlayer.cs).label("cs"),
             func.sum(MatchPlayer.wards).label("wards"),
+            # 이 넷은 나중에 생긴 컬럼이라 예전 기록에는 비어 있다. 합이 NULL 로
+            # 나오면 표시할 때 터지므로 0 으로 메운다.
+            func.coalesce(func.sum(MatchPlayer.vision_score), 0).label("vision_score"),
+            func.coalesce(func.sum(MatchPlayer.wards_killed), 0).label("wards_killed"),
+            func.coalesce(
+                func.sum(MatchPlayer.objective_damage), 0
+            ).label("objective_damage"),
+            func.coalesce(func.sum(MatchPlayer.cc_time), 0).label("cc_time"),
             func.sum(team_kills).label("team_kills"),
             func.sum(Match.duration).label("seconds"),
         )
@@ -551,6 +559,10 @@ def _apply_records(paired) -> None:
         entry.damage_taken = record.damage_taken
         entry.gold = record.gold
         entry.wards = record.wards
+        entry.vision_score = record.vision_score
+        entry.wards_killed = record.wards_killed
+        entry.objective_damage = record.objective_damage
+        entry.cc_time = record.cc_time
         entry.first_blood = record.first_blood
         entry.first_tower = record.first_tower
         entry.champion_id = record.champion_id
