@@ -5,21 +5,19 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from app.bot.messages import NEED_REGISTER
+from app.bot.messages import NEED_REGISTER, numbered
 from app.config.settings import ROOT
 from app.database.repositories import (
-    call_averages,
+    all_players,
     custom_mmr,
     custom_records,
     custom_stats,
     get_player,
     mvp_counts,
-    rank_averages,
-    trait_scores,
+    scored_players,
 )
 from app.database.session import session_factory
 from app.roles import ROLE_LABELS
-from app.services.stats import build_profile, profile_score
 
 RANK_ICONS = ROOT / "assets" / "ranks"
 
@@ -32,7 +30,7 @@ class Profile(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="랭크전적", description="솔로랭크 전적과 라인별 지표를 봅니다.")
+    @app_commands.command(name="내점수", description="내 종합 점수와 서버 순위를 봅니다.")
     @app_commands.guild_only()
     async def profile(self, interaction: discord.Interaction) -> None:
         async with session_factory() as session:
@@ -45,9 +43,11 @@ class Profile(commands.Cog):
             mmr = (await custom_mmr(session, interaction.guild_id)).get(player.id)
             recorded = await custom_stats(session, player.id, interaction.guild_id)
             mvps = await mvp_counts(session, [player.id], interaction.guild_id)
-            traits = (await trait_scores(session, [player.id])).get(player.id)
-            calls = (await call_averages(session, [player.id], interaction.guild_id))
-            ranks = (await rank_averages(session, [player.id], interaction.guild_id))
+            # 순위를 매기려면 어차피 전원의 점수가 필요하다. 내 점수도 여기서 꺼내
+            # 쓰면 순위와 점수가 따로 계산돼 어긋날 일이 없다.
+            standings = await scored_players(
+                session, await all_players(session), interaction.guild_id
+            )
 
         stats = player.stats
         if stats is None:
@@ -58,17 +58,11 @@ class Profile(commands.Cog):
 
         roles = {row.role: row for row in player.roles}
         custom_games, custom_wins = records.get(player.id, (0, 0))
-        # 밸런싱과 같은 스냅샷으로 계산한다. 표시용을 따로 계산하면 화면에 뜬
-        # 점수와 실제로 팀을 가르는 점수가 어긋난다.
-        score = profile_score(
-            build_profile(
-                player,
-                custom_games,
-                mmr=mmr,
-                traits=traits,
-                recorded_call=calls.get(player.id, (None, 0))[0],
-                ranks=ranks.get(player.id),
-            )
+        # stats 가 있으면 scored_players 에 반드시 들어 있다.
+        place, score = next(
+            (index, value)
+            for index, (entry, value) in enumerate(standings, 1)
+            if entry.id == player.id
         )
 
         rank = (
@@ -78,7 +72,9 @@ class Profile(commands.Cog):
         )
         embed = discord.Embed(
             title=f"{player.riot_game_name}#{player.riot_tagline}",
-            description=f"종합 점수 **{score:.1f}**",
+            description=(
+                f"종합 점수 **{score:.1f}** · 서버 **{place}위** / {len(standings)}명"
+            ),
             colour=discord.Colour.blurple(),
         )
         embed.add_field(
@@ -132,6 +128,40 @@ class Profile(commands.Cog):
         await interaction.response.send_message(
             embed=embed, file=discord.File(emblem), ephemeral=True
         )
+
+    @app_commands.command(name="랭킹", description="등록자 전원의 종합 점수 순위를 봅니다.")
+    @app_commands.guild_only()
+    async def ranking(self, interaction: discord.Interaction) -> None:
+        async with session_factory() as session:
+            standings = await scored_players(
+                session, await all_players(session), interaction.guild_id
+            )
+
+        if not standings:
+            await interaction.response.send_message(
+                "아직 점수를 매길 사람이 없습니다. `/전적갱신`을 먼저 실행해주세요.",
+                ephemeral=True,
+            )
+            return
+
+        def line(entry) -> str:
+            player, score = entry
+            tier = player.stats.tier
+            rank = f"{tier} {player.stats.division}" if tier else "언랭"
+            return (
+                f"**{score:.1f}** <@{player.discord_id}> "
+                f"`{player.riot_game_name}#{player.riot_tagline}` — {rank}"
+            )
+
+        embed = discord.Embed(
+            title=f"종합 점수 랭킹 {len(standings)}명",
+            description=numbered(standings, line),
+            colour=discord.Colour.blurple(),
+        )
+        # 팀을 가르는 점수와 같은 값이라, 여기서 위아래로 붙은 사람끼리는
+        # 밸런서도 비슷하게 본다는 뜻이다.
+        embed.set_footer(text="팀 짤 때 쓰는 점수와 같습니다. /내점수 로 자세히 보세요.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Profile(bot))

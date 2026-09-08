@@ -4,6 +4,7 @@ from dataclasses import replace
 import pytest
 
 from app.database.repositories import (
+    all_players,
     pick_vote_mvp,
     save_vote,
     vote_by,
@@ -19,6 +20,7 @@ from app.database.repositories import (
     custom_position_stats,
     custom_mmr,
     custom_records,
+    scored_players,
     custom_stats,
     delete_match,
     finish_match,
@@ -41,6 +43,7 @@ from app.database.repositories import (
     save_teams,
     upsert_player,
 )
+from app.models.player import PlayerStats
 from app.roles import ROLES
 from app.traits import CHAMPS, MAIN_CALL
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams
@@ -461,6 +464,65 @@ class TestResults:
 
     async def test_empty_player_list_returns_empty(self, session):
         assert await custom_records(session, [], 1) == {}
+
+class TestScoredPlayers:
+    async def stage(self, session, server_id=1):
+        """전적까지 받아 둔 내전. register 만으로는 stats 가 비어 있다."""
+        match = await staged_match(session, server_id=server_id)
+        for offset, entry in enumerate(match.participants):
+            entry.player.stats = PlayerStats(
+                tier="GOLD", division="II", lp=offset * 10, recent_games=20
+            )
+        await session.commit()
+        return match
+
+    async def standings(self, session, server_id=1):
+        return {
+            entry.id: score
+            for entry, score in await scored_players(
+                session, await all_players(session), server_id
+            )
+        }
+
+    async def test_it_comes_back_sorted_by_score(self, session):
+        await self.stage(session)
+        standings = await scored_players(session, await all_players(session), 1)
+
+        assert len(standings) == LOBBY_SIZE
+        scores = [score for _, score in standings]
+        assert scores == sorted(scores, reverse=True)
+        # LP 를 다르게 줬으니 티어 순서가 그대로 점수 순서여야 한다.
+        assert scores[0] > scores[-1]
+
+    async def test_players_without_stats_are_left_out(self, session):
+        """솔랭 지표가 없으면 점수의 절반 이상이 추측이라 순위에 올리지 않는다."""
+        match = await self.stage(session)
+        dropped = match.participants[0].player
+        dropped.stats = None
+        await session.commit()
+
+        assert dropped.id not in await self.standings(session)
+
+    async def test_winning_lifts_you_above_an_identical_player(self, session):
+        match = await self.stage(session)
+        before = await self.standings(session)
+
+        await finish_match(session, match.id, "A")
+        after = await self.standings(session)
+
+        winner = next(e.player_id for e in match.participants if e.team == "A")
+        loser = next(e.player_id for e in match.participants if e.team == "B")
+        assert after[winner] > before[winner]
+        assert after[loser] < before[loser]
+
+    async def test_another_servers_results_do_not_leak_in(self, session):
+        match = await self.stage(session)
+        await finish_match(session, match.id, "A")
+
+        winner = next(e.player_id for e in match.participants if e.team == "A")
+        assert (await self.standings(session, 1))[winner] > (
+            await self.standings(session, 2)
+        )[winner]
 
 class TestLastAssignedRoles:
     async def test_returns_the_most_recent_role_per_player(self, session):

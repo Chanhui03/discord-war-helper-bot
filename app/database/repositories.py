@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from app.models.player import Player, PlayerAlias, PlayerTrait
 from app.services.matchmaking import LOBBY_SIZE
 from app.services.replay import GameRecord, riot_id_key
 from app.services.scoring import rate_matches
+from app.services.stats import build_profile, profile_score
 
 # 재시작 때 평점 버튼을 되살릴 내전 수.
 RECENT_MATCH_LIMIT = 20
@@ -749,6 +750,44 @@ async def rank_averages(
         .group_by(MatchReview.player_id)
     )
     return {row.player_id: (float(row.average), row.games) for row in result}
+
+async def scored_players(
+    session: AsyncSession, players: Sequence[Player], server_id: int
+) -> List[Tuple[Player, float]]:
+    """등록자별 종합 점수를 높은 순으로. 전적을 한 번도 안 받은 사람은 뺀다.
+
+    솔랭 지표가 없으면 점수의 절반 이상이 추측이라 순위에 올릴 값이 못 된다.
+
+    밸런싱과 같은 build_profile 을 거친다. 표시용을 따로 계산하면 화면에 뜬
+    점수와 실제로 팀을 가르는 점수가 어긋난다. 팀 생성 쪽(match_profiles)에
+    새 지표를 붙일 때는 여기에도 같이 붙여야 한다.
+    """
+    ranked = [player for player in players if player.stats is not None]
+    player_ids = [player.id for player in ranked]
+
+    records = await custom_records(session, player_ids, server_id)
+    mmr = await custom_mmr(session, server_id)
+    traits = await trait_scores(session, player_ids)
+    calls = await call_averages(session, player_ids, server_id)
+    ranks = await rank_averages(session, player_ids, server_id)
+
+    scored = [
+        (
+            player,
+            profile_score(
+                build_profile(
+                    player,
+                    records.get(player.id, (0, 0))[0],
+                    mmr=mmr.get(player.id),
+                    traits=traits.get(player.id),
+                    recorded_call=calls.get(player.id, (None, 0))[0],
+                    ranks=ranks.get(player.id),
+                )
+            ),
+        )
+        for player in ranked
+    ]
+    return sorted(scored, key=lambda entry: entry[1], reverse=True)
 
 async def match_reviews(session: AsyncSession, match_id: int) -> Sequence:
     """한 내전의 평가 결과. 근거를 보여줄 때 쓴다. 팀별 순위 순으로 나온다."""
