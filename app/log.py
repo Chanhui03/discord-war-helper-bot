@@ -8,8 +8,11 @@ import logging
 def _fields(fields: dict) -> str:
     return " ".join(f"{k}={v}" for k, v in fields.items())
 
-def event(logger: logging.Logger, name: str, **fields) -> None:
+# logger 와 name 을 위치 전용으로 둔다. 그러지 않으면 name= 이라는 필드를 남길 때
+# 이벤트 이름과 부딪혀 TypeError 가 난다. 실제로 명령 로그가 그렇게 터져서 한 번도
+# 남지 않고 있었다. 필드 이름은 호출부가 자유롭게 골라야 한다.
+def event(logger: logging.Logger, name: str, /, **fields) -> None:
     logger.info("%s %s", name, _fields(fields))
 
-def warn(logger: logging.Logger, name: str, **fields) -> None:
+def warn(logger: logging.Logger, name: str, /, **fields) -> None:
     logger.warning("%s %s", name, _fields(fields))
