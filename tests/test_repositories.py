@@ -15,6 +15,7 @@ from app.database.repositories import (
     save_match_reviews,
     add_alias,
     aliases_for,
+    promote_alias,
     create_match,
     create_rematch,
     custom_position_stats,
@@ -908,6 +909,78 @@ class TestAliases:
         assert await remove_alias(session, other.id, alias.id) is False
         assert await remove_alias(session, owner.id, alias.id) is True
         assert await aliases_for(session, [owner.id]) == {}
+
+    async def test_promoting_swaps_the_main_and_the_alias(self, session):
+        """부계정 티어가 더 높아졌을 때 점수를 낼 계정을 바꾼다."""
+        player = await register(session, 1, "p-1", name="본계정")
+        await add_alias(session, player.id, "부계정", "KR2")
+        [alias] = (await aliases_for(session, [player.id]))[player.id]
+
+        assert await promote_alias(session, player.id, alias.id, "새puuid") == (
+            "본계정",
+            "KR1",
+        )
+
+        stored = await get_player(session, 1)
+        assert (stored.riot_game_name, stored.riot_tagline) == ("부계정", "KR2")
+        assert stored.puuid == "새puuid"
+
+    async def test_the_old_main_stays_as_an_alias(self, session):
+        """지우면 그 계정으로 뛴 지난 전적 파일에서 이 사람을 못 알아본다."""
+        player = await register(session, 1, "p-1", name="본계정")
+        await add_alias(session, player.id, "부계정", "KR2")
+        [alias] = (await aliases_for(session, [player.id]))[player.id]
+
+        await promote_alias(session, player.id, alias.id, "새puuid")
+
+        [left] = (await aliases_for(session, [player.id]))[player.id]
+        assert (left.riot_game_name, left.riot_tagline) == ("본계정", "KR1")
+        assert left.riot_id == riot_id_key("본계정", "KR1")
+
+    async def test_the_promoted_alias_is_no_longer_listed_twice(self, session):
+        player = await register(session, 1, "p-1", name="본계정")
+        await add_alias(session, player.id, "부계정", "KR2")
+        [alias] = (await aliases_for(session, [player.id]))[player.id]
+
+        await promote_alias(session, player.id, alias.id, "새puuid")
+
+        listed = (await aliases_for(session, [player.id]))[player.id]
+        assert len(listed) == 1, "올린 부계정이 부계정 목록에 남아 있다"
+
+    async def test_only_the_owner_can_promote(self, session):
+        owner = await register(session, 1, "p-1", name="주인")
+        other = await register(session, 2, "p-2", name="남")
+        await add_alias(session, owner.id, "부계정", "KR2")
+        [alias] = (await aliases_for(session, [owner.id]))[owner.id]
+
+        assert await promote_alias(session, other.id, alias.id, "새puuid") is None
+        assert (await get_player(session, 2)).riot_game_name == "남"
+
+    async def test_the_new_main_can_be_swapped_back(self, session):
+        """올린 뒤에도 예전 계정이 부계정으로 남아 되돌릴 수 있다."""
+        player = await register(session, 1, "p-1", name="본계정")
+        await add_alias(session, player.id, "부계정", "KR2")
+        [alias] = (await aliases_for(session, [player.id]))[player.id]
+        await promote_alias(session, player.id, alias.id, "새puuid")
+
+        [back] = (await aliases_for(session, [player.id]))[player.id]
+        await promote_alias(session, player.id, back.id, "p-1")
+
+        stored = await get_player(session, 1)
+        assert (stored.riot_game_name, stored.puuid) == ("본계정", "p-1")
+
+    async def test_the_peak_tier_survives_the_swap(self, session):
+        """최고 티어는 계정이 아니라 사람이 찍은 것이라 남긴다."""
+        player = await register(session, 1, "p-1", name="본계정")
+        await refresh_player_stats(session, FakeRiot(tier="DIAMOND"), player)
+        await add_alias(session, player.id, "부계정", "KR2")
+        [alias] = (await aliases_for(session, [player.id]))[player.id]
+
+        await promote_alias(session, player.id, alias.id, "새puuid")
+        stored = await get_player(session, 1)
+        await refresh_player_stats(session, FakeRiot(tier="GOLD"), stored, force=True)
+
+        assert (await get_player(session, 1)).stats.peak_tier == "DIAMOND"
 
     async def test_records_are_matched_through_the_alias(self, session):
         match = await named_match(session)

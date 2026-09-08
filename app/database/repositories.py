@@ -120,6 +120,49 @@ async def add_alias(
     await session.commit()
     return "added"
 
+async def promote_alias(
+    session: AsyncSession, player_id: int, alias_id: int, puuid: str
+) -> Optional[Tuple[str, str]]:
+    """부계정을 본계정으로 올리고, 쓰던 본계정을 부계정으로 내린다.
+
+    바뀐 (예전 본계정 이름, 태그)를 돌려준다. 본인 것이 아니면 None.
+
+    부계정에는 puuid 가 없다. 솔랭 지표를 본계정에서만 받아오느라 저장할 이유가
+    없었기 때문이다. 그래서 올릴 때 호출부가 Riot 에서 받아 넘겨준다.
+
+    예전 본계정은 지우지 않고 부계정으로 남긴다. 지우면 그 계정으로 뛴 지난
+    전적 파일에서 이 사람을 못 알아본다.
+
+    솔랭 지표(player_stats·player_roles)는 예전 계정 것이 그대로 남으므로
+    호출부에서 force 갱신을 이어서 해야 한다. 최고 티어는 일부러 남긴다.
+    계정이 아니라 사람이 찍은 티어라, 계정을 바꿨다고 없던 일이 되지 않는다.
+    """
+    alias = await session.get(PlayerAlias, alias_id)
+    if alias is None or alias.player_id != player_id:
+        return None
+
+    player = await session.get(Player, player_id)
+    previous = (player.riot_game_name, player.riot_tagline)
+
+    player.riot_game_name = alias.riot_game_name
+    player.riot_tagline = alias.riot_tagline
+    player.puuid = puuid
+
+    # 올린 부계정 행을 먼저 지워야 예전 본계정을 같은 자리에 넣을 수 있다.
+    await session.delete(alias)
+    await session.flush()
+
+    session.add(
+        PlayerAlias(
+            player_id=player_id,
+            riot_id=riot_id_key(*previous),
+            riot_game_name=previous[0],
+            riot_tagline=previous[1],
+        )
+    )
+    await session.commit()
+    return previous
+
 async def remove_alias(session: AsyncSession, player_id: int, alias_id: int) -> bool:
     """본인 것만 지운다."""
     alias = await session.get(PlayerAlias, alias_id)
