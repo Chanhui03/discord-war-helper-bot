@@ -1,6 +1,6 @@
 """설계서 6장의 설명 가능한 가중합 점수 모델."""
 
-from typing import Optional, Sequence
+from typing import Dict, Optional, Sequence, Tuple
 
 # 티어별 누적 LP 환산. IRON~DIAMOND 는 4개 디비전 × 100LP 로 계산한다.
 TIER_ORDER = [
@@ -28,7 +28,6 @@ WEIGHTS = {
     "role": 0.10,
     "recent_form": 0.07,
     "performance": 0.03,
-    "custom": 0.10,
     # 내전 판별 평가에서 온 순위. 승률과 달리 밸런서가 지우지 못하는 신호다.
     "internal": 0.10,
     "mastery": 0.05,
@@ -56,6 +55,27 @@ ROLE_PENALTIES = {
 }
 
 NEUTRAL = 50.0
+
+# 내전 MMR(설계서 6장 Custom Game Score). Elo 방식이다.
+#
+# 이 값은 '실력'이 아니라 '모델이 틀린 만큼'을 재는 보정항이다. 밸런서가 추정
+# 전투력으로 팀을 맞추므로, 추정이 맞으면 모두 승률 50% 근처에 머물러 MMR 이
+# 시작값에서 안 움직인다(= 고칠 게 없다). 반대로 저평가된 사람은 모델이
+# '비슷하다'고 본 팀을 실제로는 이겨서 MMR 이 올라간다. 그래서 시작값을 티어에서
+# 끌어오지 않고 전원 같은 값에서 출발시킨다. 티어를 섞으면 티어를 두 번 세는 꼴이다.
+MMR_START = 1200.0
+# 한 판에 팀 평균이 같을 때 ±MMR_K/2 만큼 움직인다.
+MMR_K = 32.0
+# Elo 에서 400 은 기대 승률 10:1 이 되는 차이다. 그만큼 벌리면 최대로 민다.
+MMR_SPAN = 400.0
+# MMR 이 종합 점수를 밀 수 있는 최대 폭(점). 티어 축에서 한 티어가 약 9점이니
+# 15점이면 '내전에서 증명하면 한 티어 반까지 뒤집을 수 있다'는 뜻이다.
+#
+# 가중 평균 항이 아니라 더하는 값인 이유: MMR 은 중립이 1200 인 보정항이고
+# 티어는 절대 수준이다. 축이 다른 둘을 평균내면 기록과 무관하게 잘하는 사람은
+# 50 쪽으로 내려가고 못하는 사람은 올라간다. 실제로 5연승한 마스터의 점수가
+# 72.8 에서 70.6 으로 내려갔다.
+MMR_ADJUST = 15.0
 
 # 주관 지표(오더능력·챔피언폭)를 반영하기 위한 최소 평가 인원. 서로 아는 인원이
 # 많지 않아 한 명만 매겨도 초기값으로 쓴다.
@@ -225,16 +245,18 @@ def base_score(
     role: Optional[float] = None,
     recent_form: Optional[float] = None,
     performance: Optional[float] = None,
-    custom: Optional[float] = None,
     internal: Optional[float] = None,
     mastery: Optional[float] = None,
     follow: Optional[float] = None,
+    mmr: Optional[float] = None,
     takeover: float = 0.0,
 ) -> float:
     """제공된 요소만으로 가중 평균을 낸다. 없는 요소의 가중치는 나머지에 재분배된다.
 
     가중치는 합이 1 일 필요가 없다. 있는 요소들끼리 다시 정규화하므로 상대
     비율만 의미가 있다.
+
+    mmr 은 내전 MMR 로, 평균에 섞이지 않고 결과에 더해진다.
 
     takeover 는 0~1 로, 솔랭에서 온 지표의 힘을 얼마나 뺄지다. 내전 판수가
     쌓일수록 티어·라인·최근폼·KDA 가 물러나고 내전 기록이 앞에 선다. 다만
@@ -246,14 +268,13 @@ def base_score(
         "role": role,
         "recent_form": recent_form,
         "performance": performance,
-        "custom": custom,
         "internal": internal,
         "mastery": mastery,
         "follow": follow,
     }
     available = {k: v for k, v in components.items() if v is not None}
     if not available:
-        return NEUTRAL
+        return NEUTRAL + mmr_adjustment(mmr)
 
     weights = {
         key: WEIGHTS[key] * (1.0 - takeover if key in SOLO_COMPONENTS else 1.0)
@@ -266,7 +287,9 @@ def base_score(
         weights = {key: WEIGHTS[key] for key in available}
         total_weight = sum(weights.values())
 
-    return sum(weights[k] * v for k, v in available.items()) / total_weight
+    average = sum(weights[k] * v for k, v in available.items()) / total_weight
+    # 내전 MMR 은 평균에 섞지 않고 더한다(MMR_ADJUST 주석 참고).
+    return min(max(average + mmr_adjustment(mmr), 0.0), 100.0)
 
 def role_affinity(
     role: str,
@@ -320,14 +343,51 @@ def rank_score(average: Optional[float], games: int, team_size: int = 5) -> Opti
     confidence = min(games / 10.0, 1.0)
     return NEUTRAL + (raw - NEUTRAL) * confidence
 
-def custom_score(games: int, wins: int) -> Optional[float]:
-    """내전 성적을 0~100 으로 환산한다(설계서 6장 Custom Game Score).
+def expected_win(team: float, opponent: float) -> float:
+    """Elo 기대 승률. 400 차이면 10:1 로 이긴다는 뜻이다."""
+    return 1.0 / (1.0 + 10 ** ((opponent - team) / MMR_SPAN))
 
-    기록이 없으면 None 을 돌려 해당 가중치를 다른 요소에 재분배한다.
+def rate_matches(
+    matches: Sequence[Tuple[Sequence[int], Sequence[int]]]
+) -> Dict[int, float]:
+    """끝난 내전을 오래된 것부터 훑어 플레이어별 내전 MMR 을 낸다.
+
+    matches 는 (이긴 사람들, 진 사람들) 순서다. 팀 평균끼리 Elo 를 계산해
+    이긴 쪽에 더하고 진 쪽에서 같은 값을 뺀다(합이 0).
+
+    단순 승률과 다른 점은 '누구를 상대로' 이겼는지가 들어간다는 것이다.
+    강해 보이는 팀을 이기면 많이 오르고, 약한 팀에 지면 많이 떨어진다.
     """
-    if games <= 0:
-        return None
+    ratings: Dict[int, float] = {}
+    for winners, losers in matches:
+        for player_id in (*winners, *losers):
+            ratings.setdefault(player_id, MMR_START)
+        if not winners or not losers:
+            continue
 
-    win_rate = wins / games
-    confidence = min(games / 10.0, 1.0)
-    return NEUTRAL + (win_rate * 100 - NEUTRAL) * confidence
+        gain = MMR_K * (
+            1.0
+            - expected_win(
+                sum(ratings[p] for p in winners) / len(winners),
+                sum(ratings[p] for p in losers) / len(losers),
+            )
+        )
+        for player_id in winners:
+            ratings[player_id] += gain
+        for player_id in losers:
+            ratings[player_id] -= gain
+    return ratings
+
+def mmr_adjustment(mmr: Optional[float]) -> float:
+    """내전 MMR 이 종합 점수를 몇 점 밀어 올리는지(설계서 6장 Custom Game Score).
+
+    기록이 없으면 0 이다. 시작값(MMR_START)에서 움직인 만큼만 밀고,
+    MMR_SPAN 을 벌리면 ±MMR_ADJUST 로 멈춘다.
+
+    판수가 적다고 따로 수축시키지 않는다. Elo 는 한 판에 최대 MMR_K/2 만
+    움직여서 표본이 적으면 알아서 시작값 근처에 머무른다.
+    """
+    if mmr is None:
+        return 0.0
+
+    return max(min((mmr - MMR_START) / MMR_SPAN, 1.0), -1.0) * MMR_ADJUST

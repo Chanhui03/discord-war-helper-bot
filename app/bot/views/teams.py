@@ -6,6 +6,7 @@ import discord
 
 from app.database.repositories import (
     call_averages,
+    custom_mmr,
     custom_records,
     rank_averages,
     last_assigned_roles,
@@ -105,6 +106,7 @@ async def match_profiles(session, match):
     """이 내전 참가자들의 밸런싱용 스냅샷. 팀 생성과 팀 수정이 같이 쓴다."""
     player_ids = [entry.player_id for entry in match.participants]
     records = await custom_records(session, player_ids, match.discord_server_id)
+    mmr = await custom_mmr(session, match.discord_server_id)
     previous = await last_assigned_roles(
         session, player_ids, match.discord_server_id, exclude_match_id=match.id
     )
@@ -114,8 +116,9 @@ async def match_profiles(session, match):
     return [
         build_profile(
             entry.player,
-            *records.get(entry.player_id, (0, 0)),
+            records.get(entry.player_id, (0, 0))[0],
             last_role=previous.get(entry.player_id),
+            mmr=mmr.get(entry.player_id),
             traits=traits.get(entry.player_id),
             recorded_call=calls.get(entry.player_id, (None, 0))[0],
             ranks=ranks.get(entry.player_id),

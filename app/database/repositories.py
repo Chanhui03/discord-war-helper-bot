@@ -15,6 +15,7 @@ from app.models.match import (
 from app.models.player import Player, PlayerAlias, PlayerTrait
 from app.services.matchmaking import LOBBY_SIZE
 from app.services.replay import GameRecord, riot_id_key
+from app.services.scoring import rate_matches
 
 # 재시작 때 평점 버튼을 되살릴 내전 수.
 RECENT_MATCH_LIMIT = 20
@@ -378,6 +379,26 @@ async def custom_records(
         .group_by(MatchPlayer.player_id)
     )
     return {row.player_id: (row.games, int(row.wins or 0)) for row in result}
+
+async def custom_mmr(session: AsyncSession, server_id: int) -> Dict[int, float]:
+    """그 서버에서 끝난 내전을 오래된 순으로 훑어 낸 내전 MMR.
+
+    저장하지 않고 매번 다시 계산한다. 8경기 규모라 값싸고, 결과를 고치거나
+    내전을 지웠을 때 저장해 둔 MMR 이 어긋날 일이 없다. 계산식을 바꾸면
+    과거 기록에도 바로 반영된다.
+    """
+    result = await session.execute(
+        select(Match).where(*_finished_in(server_id)).order_by(Match.id)
+    )
+    return rate_matches(
+        [
+            (
+                [e.player_id for e in match.participants if e.win is True],
+                [e.player_id for e in match.participants if e.win is False],
+            )
+            for match in result.scalars()
+        ]
+    )
 
 async def custom_stats(
     session: AsyncSession, player_id: int, server_id: int

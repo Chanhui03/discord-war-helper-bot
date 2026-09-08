@@ -17,6 +17,7 @@ from app.database.repositories import (
     create_match,
     create_rematch,
     custom_position_stats,
+    custom_mmr,
     custom_records,
     custom_stats,
     delete_match,
@@ -44,7 +45,13 @@ from app.roles import ROLES
 from app.traits import CHAMPS, MAIN_CALL
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams
 from app.services.replay import GameRecord, ParticipantRecord, riot_id_key
-from app.services.stats import SOLO_QUEUE_ID, build_profile, refresh_player_stats
+from app.services.scoring import MMR_START
+from app.services.stats import (
+    SOLO_QUEUE_ID,
+    build_profile,
+    profile_score,
+    refresh_player_stats,
+)
 from app.services.transcript import PlayerCall
 
 pytestmark = pytest.mark.asyncio
@@ -418,16 +425,39 @@ class TestResults:
     async def test_custom_record_reaches_the_balancing_profile(self, session):
         match = await staged_match(session)
         await finish_match(session, match.id, "A")
-        records = await custom_records(
-            session, [e.player_id for e in match.participants], 1
-        )
+        mmr = await custom_mmr(session, 1)
 
         winner = next(e for e in match.participants if e.team == "A")
         loser = next(e for e in match.participants if e.team == "B")
-        won = build_profile(winner.player, *records[winner.player_id])
-        lost = build_profile(loser.player, *records[loser.player_id])
+        won = build_profile(winner.player, mmr=mmr[winner.player_id])
+        lost = build_profile(loser.player, mmr=mmr[loser.player_id])
 
-        assert won.custom > lost.custom
+        assert won.mmr > lost.mmr
+        assert profile_score(won) > profile_score(lost)
+
+    async def test_mmr_ignores_unfinished_matches(self, session):
+        match = await staged_match(session)
+        assert await custom_mmr(session, 1) == {}
+
+        await finish_match(session, match.id, "A")
+        assert len(await custom_mmr(session, 1)) == len(match.participants)
+
+    async def test_mmr_is_scoped_to_one_server(self, session):
+        """내전 MMR 도 성적과 같이 해당 Discord 서버 기준으로 센다."""
+        first = await staged_match(session, server_id=1)
+        await finish_match(session, first.id, "A")
+        winner_ids = [e.player_id for e in first.participants if e.team == "A"]
+
+        elsewhere = await create_second(session, winner_ids, server_id=2)
+        await finish_match(session, elsewhere.id, "A")
+
+        loser_ids = [e.player_id for e in first.participants if e.team == "B"]
+        assert await custom_mmr(session, 3) == {}
+        here = await custom_mmr(session, 1)
+        there = await custom_mmr(session, 2)
+        # 1서버에서만 뛴 패배자들은 2서버 MMR 에 아예 없다.
+        assert set(loser_ids) <= set(here) and not set(loser_ids) & set(there)
+        assert all(here[pid] < MMR_START for pid in loser_ids)
 
     async def test_empty_player_list_returns_empty(self, session):
         assert await custom_records(session, [], 1) == {}

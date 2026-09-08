@@ -2,14 +2,19 @@ import pytest
 
 from app.services.scoring import (
     APEX_LP_RANGE,
+    MMR_ADJUST,
+    MMR_K,
+    MMR_SPAN,
+    MMR_START,
     NEUTRAL,
     TAKEOVER_GAMES,
     TAKEOVER_MAX,
     base_score,
-    custom_score,
+    mmr_adjustment,
     performance_score,
     role_affinity,
     role_power,
+    rate_matches,
     role_score,
     takeover_of,
     tier_score,
@@ -98,7 +103,7 @@ class TestBaseScore:
     def test_all_equal_components_give_that_value(self):
         assert base_score(
             tier=70.0, role=70.0, recent_form=70.0,
-            performance=70.0, custom=70.0, mastery=70.0,
+            performance=70.0, internal=70.0, mastery=70.0,
         ) == pytest.approx(70.0)
 
     def test_tier_dominates_role(self):
@@ -120,13 +125,13 @@ class TestTakeover:
         full = takeover_of(TAKEOVER_GAMES * 5)
         assert full == pytest.approx(TAKEOVER_MAX) and full < 1.0
 
-        high = base_score(tier=100.0, custom=NEUTRAL, internal=NEUTRAL, takeover=full)
-        low = base_score(tier=0.0, custom=NEUTRAL, internal=NEUTRAL, takeover=full)
+        high = base_score(tier=100.0, internal=NEUTRAL, mastery=NEUTRAL, takeover=full)
+        low = base_score(tier=0.0, internal=NEUTRAL, mastery=NEUTRAL, takeover=full)
         assert high - low > 10.0
 
     def test_it_still_moves_weight_toward_the_internal_record(self):
-        rookie = base_score(tier=100.0, custom=0.0, takeover=takeover_of(0))
-        veteran = base_score(tier=100.0, custom=0.0, takeover=takeover_of(TAKEOVER_GAMES))
+        rookie = base_score(tier=100.0, internal=0.0, takeover=takeover_of(0))
+        veteran = base_score(tier=100.0, internal=0.0, takeover=takeover_of(TAKEOVER_GAMES))
         assert veteran < rookie
 
 class TestRoleAffinity:
@@ -172,22 +177,55 @@ class TestRolePower:
     def test_never_goes_below_zero(self):
         assert role_power(5.0, "TOP", "MID", "ADC", "TOP") == 0.0
 
-class TestCustomScore:
-    def test_no_custom_games_returns_none(self):
-        assert custom_score(0, 0) is None
+class TestCustomMmr:
+    SWEEP = ([1, 2, 3, 4, 5], [6, 7, 8, 9, 10])
 
-    def test_small_sample_shrinks_toward_neutral(self):
-        few = custom_score(2, 2)
-        many = custom_score(10, 10)
-        assert NEUTRAL < few < many == 100.0
+    def test_no_matches_means_no_rating(self):
+        assert rate_matches([]) == {}
+        assert mmr_adjustment(None) == 0.0
 
-    def test_losing_record_scores_below_neutral(self):
-        assert custom_score(20, 4) < NEUTRAL
+    def test_the_starting_value_moves_nothing(self):
+        assert mmr_adjustment(MMR_START) == 0.0
 
-    def test_confidence_saturates_at_ten_games(self):
-        assert custom_score(10, 7) == custom_score(40, 28)
+    def test_it_is_zero_sum(self):
+        rated = rate_matches([self.SWEEP] * 3)
+        assert sum(rated.values()) == pytest.approx(MMR_START * len(rated))
 
-    def test_feeds_into_base_score(self):
-        strong = base_score(tier=60.0, custom=custom_score(20, 18))
-        weak = base_score(tier=60.0, custom=custom_score(20, 2))
-        assert strong > 60.0 > weak
+    def test_winning_raises_and_losing_lowers(self):
+        rated = rate_matches([self.SWEEP])
+        assert mmr_adjustment(rated[1]) > 0.0 > mmr_adjustment(rated[6])
+        # 팀 평균이 같으면 한 판에 K/2 만큼 움직인다.
+        assert rated[1] - MMR_START == pytest.approx(MMR_K / 2)
+
+    def test_beating_a_weak_team_is_worth_less(self):
+        """같은 1승이어도 상대가 누구였는지에 따라 오르는 폭이 다르다."""
+        first = rate_matches([self.SWEEP])[1] - MMR_START
+        fourth = rate_matches([self.SWEEP] * 4)[1] - rate_matches([self.SWEEP] * 3)[1]
+        assert fourth < first
+
+    def test_losing_to_a_weak_team_hurts_more(self):
+        upset = rate_matches([self.SWEEP] * 3 + [(self.SWEEP[1], self.SWEEP[0])])
+        even = rate_matches([self.SWEEP] * 3)
+        assert even[1] - upset[1] > MMR_K / 2
+
+    def test_a_newcomer_starts_neutral(self):
+        """중간에 합류한 사람은 기록이 없으니 중립에서 시작한다."""
+        assert rate_matches([self.SWEEP]).get(11) is None
+        rated = rate_matches([self.SWEEP, ([1, 2, 3, 4, 11], [6, 7, 8, 9, 12])])
+        assert mmr_adjustment(rated[11]) > 0.0  # 첫 판을 이겼다
+
+    def test_adjustment_is_capped(self):
+        assert mmr_adjustment(MMR_START + MMR_SPAN) == pytest.approx(MMR_ADJUST)
+        assert mmr_adjustment(MMR_START + MMR_SPAN * 5) == pytest.approx(MMR_ADJUST)
+        assert mmr_adjustment(MMR_START - MMR_SPAN * 5) == pytest.approx(-MMR_ADJUST)
+
+    def test_it_lifts_everyone_who_wins_regardless_of_tier(self):
+        """가중 평균에 섞으면 5연승한 마스터의 점수가 오히려 내려갔다."""
+        rated = rate_matches([self.SWEEP] * 5)
+        for tier in (24.2, 60.0, 72.8):
+            assert base_score(tier=tier, mmr=rated[1]) > base_score(tier=tier)
+            assert base_score(tier=tier, mmr=rated[6]) < base_score(tier=tier)
+
+    def test_the_score_stays_in_range(self):
+        assert base_score(tier=100.0, mmr=MMR_START + MMR_SPAN) == 100.0
+        assert base_score(tier=0.0, mmr=MMR_START - MMR_SPAN) == 0.0

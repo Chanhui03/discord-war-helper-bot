@@ -13,7 +13,6 @@ from app.services.scoring import (
     rank_score,
     takeover_of,
     champion_pool_score,
-    custom_score,
     mastery_score,
     performance_score,
     role_score,
@@ -118,7 +117,7 @@ def profile_score(profile: PlayerProfile, custom_games: int = 0) -> float:
         role=profile.role_scores.get(profile.main_role),
         recent_form=profile.recent_form,
         performance=profile.performance,
-        custom=profile.custom,
+        mmr=profile.mmr,
         internal=profile.internal,
         mastery=profile.mastery,
         follow=profile.follow,
@@ -197,8 +196,8 @@ async def refresh_player_stats(session, riot, player, force: bool = False) -> bo
 def build_profile(
     player,
     custom_games: int = 0,
-    custom_wins: int = 0,
     last_role: Optional[str] = None,
+    mmr: Optional[float] = None,
     traits: Optional[Dict[str, Any]] = None,
     recorded_call: Optional[float] = None,
     ranks: Optional[Any] = None,
@@ -206,6 +205,8 @@ def build_profile(
     """저장된 전적과 내전 기록에서 밸런싱용 스냅샷을 만든다.
 
     직전 내전에서 기피 라인을 갔다면 이번에는 그 라인 배정을 금지한다.
+    mmr 은 custom_mmr 로 계산한 내전 MMR 이다. 승패 수는 점수에 쓰지 않고,
+    판수(custom_games)는 주관 지표를 걷어내고 솔랭 지표를 물리는 데만 쓴다.
     traits 는 {지표: (평균, 평가 인원)} 이고, 내전 기록이 쌓일수록 힘을 잃는다.
     챔피언폭은 계정 숙련도와 동료평가를, 메인오더는 음성 대본 채점과 동료평가를
     각각 평균낸다.
@@ -221,7 +222,7 @@ def build_profile(
         tier=tier_score(stats.tier, stats.division, stats.lp) if stats else None,
         recent_form=recent.recent_win_rate * 100 if recent else None,
         performance=performance_score(recent.avg_kda) if recent else None,
-        custom=custom_score(custom_games, custom_wins),
+        mmr=mmr,
         internal=rank_score(*(ranks or (None, 0))),
         takeover=takeover_of(custom_games),
         win_rate=stats.win_rate if stats else 0.0,

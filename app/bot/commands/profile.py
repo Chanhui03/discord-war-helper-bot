@@ -9,6 +9,7 @@ from app.bot.messages import NEED_REGISTER
 from app.config.settings import ROOT
 from app.database.repositories import (
     call_averages,
+    custom_mmr,
     custom_records,
     custom_stats,
     get_player,
@@ -41,6 +42,7 @@ class Profile(commands.Cog):
                 return
 
             records = await custom_records(session, [player.id], interaction.guild_id)
+            mmr = (await custom_mmr(session, interaction.guild_id)).get(player.id)
             recorded = await custom_stats(session, player.id, interaction.guild_id)
             mvps = await mvp_counts(session, [player.id], interaction.guild_id)
             traits = (await trait_scores(session, [player.id])).get(player.id)
@@ -62,7 +64,7 @@ class Profile(commands.Cog):
             build_profile(
                 player,
                 custom_games,
-                custom_wins,
+                mmr=mmr,
                 traits=traits,
                 recorded_call=calls.get(player.id, (None, 0))[0],
                 ranks=ranks.get(player.id),
@@ -90,6 +92,7 @@ class Profile(commands.Cog):
         )
         custom = (
             f"{custom_games}전 {custom_wins}승 ({custom_wins / custom_games:.1%})"
+            f"\nMMR {mmr:.0f}"
             if custom_games
             else "기록 없음"
         )

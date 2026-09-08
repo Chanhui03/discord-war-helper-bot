@@ -44,7 +44,8 @@ class PlayerProfile:
     tier: Optional[float]
     recent_form: Optional[float]
     performance: Optional[float]
-    custom: Optional[float]
+    # 내전 MMR. 실력의 절대 수준이 아니라 '모델이 틀린 만큼'이라 점수에 더해진다.
+    mmr: Optional[float]
     # 내전 판별 평가의 평균 순위. 밸런서가 지우지 못하는 내전 신호다.
     internal: Optional[float]
     win_rate: float
@@ -92,7 +93,7 @@ def power_of(profile: PlayerProfile, role: str) -> float:
             role=profile.role_scores.get(role),
             recent_form=profile.recent_form,
             performance=profile.performance,
-            custom=profile.custom,
+            mmr=profile.mmr,
             internal=profile.internal,
             mastery=profile.mastery,
             follow=profile.follow,

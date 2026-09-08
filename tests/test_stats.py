@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.services.scoring import TAKEOVER_GAMES
+from app.services.scoring import MMR_START, TAKEOVER_GAMES
 from app.services.stats import (
     MATCH_CONCURRENCY,
     STATS_TTL,
@@ -127,11 +127,11 @@ class TestProfileScore:
     def test_custom_records_move_the_displayed_score(self):
         """예전에는 표시 점수가 내전 전적을 아예 빼고 계산했다."""
         without = profile_score(self.profile(tier=60.0))
-        with_customs = profile_score(self.profile(tier=60.0, custom=100.0))
+        with_customs = profile_score(self.profile(tier=60.0, mmr=MMR_START + 200))
         assert with_customs > without
 
     def test_internal_rank_takes_over_after_enough_games(self):
-        built = self.profile(tier=95.0, custom=50.0, internal=10.0)
+        built = self.profile(tier=95.0, internal=10.0)
         early = profile_score(built, custom_games=0)
         late = profile_score(built, custom_games=TAKEOVER_GAMES)
         assert late < early, "내전 판수가 쌓여도 솔랭 티어가 그대로 남았다"

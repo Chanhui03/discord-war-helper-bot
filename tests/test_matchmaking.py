@@ -19,7 +19,7 @@ from app.services.matchmaking import (
 )
 
 def profile(pid, tier=60.0, main=None, secondary=None, win_rate=0.5,
-            recent=50.0, performance=50.0, role_scores=None, custom=None,
+            recent=50.0, performance=50.0, role_scores=None, mmr=None,
             avoid=None, must_avoid=False, mastery=None, main_call=None, follow=None,
             internal=None, takeover=0.0):
     return PlayerProfile(
@@ -28,7 +28,7 @@ def profile(pid, tier=60.0, main=None, secondary=None, win_rate=0.5,
         tier=tier,
         recent_form=recent,
         performance=performance,
-        custom=custom,
+        mmr=mmr,
         internal=internal,
         win_rate=win_rate,
         main_role=main,
