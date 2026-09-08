@@ -12,8 +12,7 @@ from app.traits import summary
 # 합계 컬럼. 전체 행은 라인별 행을 이 항목들로 더해서 만든다.
 SUMS = (
     "games", "wins", "kills", "deaths", "assists", "first_blood", "first_tower",
-    "damage", "damage_taken", "gold", "cs", "wards", "vision_score", "wards_killed",
-    "objective_damage", "cc_time", "team_kills", "seconds",
+    "damage", "damage_taken", "gold", "cs", "wards", "team_kills", "seconds",
 )
 
 # 코드블록의 한글은 영문 고정폭의 정수배가 아니라, 숫자와 같은 칸에 두면 칸이
@@ -22,9 +21,6 @@ BASIC = (("G", 4), ("W", 4), ("L", 4), ("WR", 7), ("KDA", 7),
          ("KP", 7), ("K", 6), ("D", 6), ("A", 6))
 DETAIL = (("DPM", 8), ("DTPM", 8), ("GPM", 7), ("CSPM", 6), ("DPGR", 6),
           ("FB", 6), ("FT", 6), ("WARD", 6))
-# 탱커·서폿의 기여는 KDA 로 잡히지 않아 따로 본다. 전적 파일에는 처음부터 들어
-# 있었지만 저장하지 않고 버리던 값들이다.
-SUPPORT = (("VS", 6), ("VS/M", 7), ("WK", 6), ("OBJ", 9), ("CC", 6))
 
 def lane(label: str) -> str:
     """라인 칸은 전부 한글이라 글자 수만 맞추면 된다. 한 글자인 '탑'은 전각
@@ -76,19 +72,6 @@ def detail_cells(label: str, total: dict):
         f"{total['wards'] / total['games']:.1f}",
     ]
 
-def support_cells(label: str, total: dict):
-    games = total["games"]
-    minutes = total["seconds"] / 60
-    return [
-        label,
-        f"{total['vision_score'] / games:.1f}",
-        f"{total['vision_score'] / minutes:.2f}",
-        f"{total['wards_killed'] / games:.1f}",
-        f"{total['objective_damage'] / games:,.0f}",
-        # 상대를 묶어 둔 시간. 초 단위로 들어온다.
-        f"{total['cc_time'] / games:.0f}s",
-    ]
-
 def trait_field(rows, scores) -> str:
     """평가 값과 그것이 아직 팀 짜기에 반영되는지."""
     games = sum(row.games for row in rows)
@@ -118,13 +101,6 @@ def stats_embed(player, rows, scores) -> discord.Embed:
         embed.add_field(
             name="세부",
             value=table(DETAIL, [detail_cells(label, total) for label, total in lines]),
-            inline=False,
-        )
-        embed.add_field(
-            name="시야·기여",
-            value=table(
-                SUPPORT, [support_cells(label, total) for label, total in lines]
-            ),
             inline=False,
         )
     else:

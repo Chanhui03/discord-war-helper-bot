@@ -40,7 +40,7 @@ def blocks(embed):
 
 def test_header_comes_first_then_the_total_then_each_line():
     embed = stats_embed(PLAYER, [row("MID", 6), row("TOP", 2)], {})
-    basic, detail, support = blocks(embed)
+    basic, detail = blocks(embed)
 
     assert basic[0].split() == [
         "라인", "G", "W", "L", "WR", "KDA", "KP", "K", "D", "A"
@@ -48,8 +48,6 @@ def test_header_comes_first_then_the_total_then_each_line():
     assert [line.split()[0] for line in basic] == ["라인", "전체", "미드", "탑"]
     assert detail[0].split() == ["라인", "DPM", "DTPM", "GPM", "CSPM", "DPGR", "FB", "FT", "WARD"]
     assert [line.split()[0] for line in detail] == ["라인", "전체", "미드", "탑"]
-    assert support[0].split() == ["라인", "VS", "VS/M", "WK", "OBJ", "CC"]
-    assert [line.split()[0] for line in support] == ["라인", "전체", "미드", "탑"]
 
 def test_total_row_sums_every_line():
     embed = stats_embed(PLAYER, [row("MID", 6), row("TOP", 2)], {})
@@ -94,31 +92,16 @@ def test_numbers_match_the_opgg_style_row():
         team_kills=580,
         seconds=1800 * 44,
     )
-    basic, detail, support = blocks(stats_embed(PLAYER, [sample], {}))
+    basic, detail = blocks(stats_embed(PLAYER, [sample], {}))
 
     assert basic[2].split() == [
         "미드", "44", "16", "28", "36.4%", "3.79", "70.0%", "4.3", "2.4", "5.0"
     ]
     # DPGR 은 DPM / GPM (골드 대비 딜 가성비).
     assert detail[2].split() == ["미드", "708.3", "602.4", "424.7", "9.18", "1.67", "13.6%", "20.5%", "12.8"]
-    # 시야는 판당, 시야/분은 경기 시간 합으로 나눈다.
-    assert support[2].split() == ["미드", "30.0", "1.00", "6.0", "12,000", "25s"]
-
-def test_support_block_reads_a_tank_apart_from_kda():
-    """탱커·서폿 기여는 KDA 로 안 잡힌다. 킬은 적은데 시야와 CC 가 높은 경우."""
-    tank = row("SUPPORT", 10, kills=5, assists=90, vision_score=800, cc_time=600)
-    _, _, support = blocks(stats_embed(PLAYER, [tank], {}))
-    assert support[2].split() == ["서폿", "80.0", "2.67", "6.0", "12,000", "60s"]
-
-def test_old_records_without_the_new_columns_do_not_crash():
-    """컬럼이 생기기 전 기록은 합이 0 으로 메워져 온다."""
-    old = row("MID", 4, vision_score=0, wards_killed=0, objective_damage=0, cc_time=0)
-    _, _, support = blocks(stats_embed(PLAYER, [old], {}))
-    assert support[2].split() == ["미드", "0.0", "0.00", "0.0", "0", "0s"]
 
 def test_every_summed_column_is_used():
     assert set(SUMS) == {
         "games", "wins", "kills", "deaths", "assists", "first_blood", "first_tower",
-        "damage", "damage_taken", "gold", "cs", "wards", "vision_score",
-        "wards_killed", "objective_damage", "cc_time", "team_kills", "seconds",
+        "damage", "damage_taken", "gold", "cs", "wards", "team_kills", "seconds",
     }

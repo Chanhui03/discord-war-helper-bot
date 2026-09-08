@@ -56,7 +56,6 @@ class Profile(commands.Cog):
             )
             return
 
-        roles = {row.role: row for row in player.roles}
         custom_games, custom_wins = records.get(player.id, (0, 0))
         # stats 가 있으면 scored_players 에 반드시 들어 있다.
         place, score = next(
@@ -115,16 +114,6 @@ class Profile(commands.Cog):
             ),
             inline=False,
         )
-
-        if roles:
-            lines = [
-                f"`{ROLE_LABELS[row.role]:<2}` {row.games}전 {row.win_rate:.0%} "
-                f"KDA {row.avg_kda:.2f} · 점수 {row.role_score:.1f}"
-                for row in sorted(
-                    roles.values(), key=lambda r: r.games, reverse=True
-                )
-            ]
-            embed.add_field(name="라인별 지표", value="\n".join(lines), inline=False)
 
         embed.set_footer(text=f"갱신 {stats.updated_at:%Y-%m-%d %H:%M}")
 
