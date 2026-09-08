@@ -16,27 +16,26 @@ SUMS = (
     "objective_damage", "cc_time", "team_kills", "seconds",
 )
 
-BASIC = (("라인", 4), ("경기", 6), ("승", 4), ("패", 4), ("승률", 8), ("KDA", 6),
-         ("관여", 7), ("킬", 6), ("데스", 6), ("어시", 6))
-DETAIL = (("라인", 4), ("DPM", 8), ("DTPM", 8), ("GPM", 8), ("CSPM", 6),
-          ("DPGR", 6), ("첫킬", 7), ("첫포탑", 8), ("와드", 6))
+# 코드블록의 한글은 영문 고정폭의 정수배가 아니라, 숫자와 같은 칸에 두면 칸이
+# 어긋난다. 그래서 라인 칸만 한글로 두고 나머지 머리글과 값은 전부 ASCII 로 쓴다.
+BASIC = (("G", 4), ("W", 4), ("L", 4), ("WR", 7), ("KDA", 7),
+         ("KP", 7), ("K", 6), ("D", 6), ("A", 6))
+DETAIL = (("DPM", 8), ("DTPM", 8), ("GPM", 7), ("CSPM", 6), ("DPGR", 6),
+          ("FB", 6), ("FT", 6), ("WARD", 6))
 # 탱커·서폿의 기여는 KDA 로 잡히지 않아 따로 본다. 전적 파일에는 처음부터 들어
 # 있었지만 저장하지 않고 버리던 값들이다.
-SUPPORT = (("라인", 4), ("시야", 7), ("시야/분", 9), ("와드제거", 10),
-           ("오브딜", 9), ("CC", 7))
+SUPPORT = (("VS", 6), ("VS/M", 7), ("WK", 6), ("OBJ", 9), ("CC", 6))
 
-def width(text: str) -> int:
-    """코드블록은 고정폭이지만 한글은 두 칸을 차지한다."""
-    return sum(2 if ord(char) > 0x2E7F else 1 for char in text)
-
-def pad(text: str, size: int) -> str:
-    """한글 폭을 감안해 오른쪽 정렬한다."""
-    return text.rjust(size - width(text) + len(text))
+def lane(label: str) -> str:
+    """라인 칸은 전부 한글이라 글자 수만 맞추면 된다. 한 글자인 '탑'은 전각
+    공백으로 채워 두 글자짜리와 폭을 맞춘다."""
+    return label.ljust(2, "\u3000")
 
 def table(columns, rows) -> str:
-    lines = [[name for name, _ in columns], *rows]
+    lines = [["라인", *(name for name, _ in columns)], *rows]
     return "```\n" + "\n".join(
-        "".join(pad(cell, size) for cell, (_, size) in zip(line, columns))
+        lane(line[0])
+        + "".join(cell.rjust(size) for cell, (_, size) in zip(line[1:], columns))
         for line in lines
     ) + "\n```"
 
@@ -87,7 +86,7 @@ def support_cells(label: str, total: dict):
         f"{total['wards_killed'] / games:.1f}",
         f"{total['objective_damage'] / games:,.0f}",
         # 상대를 묶어 둔 시간. 초 단위로 들어온다.
-        f"{total['cc_time'] / games:.0f}초",
+        f"{total['cc_time'] / games:.0f}s",
     ]
 
 def trait_field(rows, scores) -> str:
