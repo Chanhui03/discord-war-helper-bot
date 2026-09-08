@@ -37,6 +37,11 @@ WEIGHTS = {
 # 점수를 받는다. 모르는 것은 빼는 게 아니라 평균으로 둔다.
 UNRANKED_TIER = 50.0
 
+# 현재 티어가 최고 티어보다 낮을 때 그 차이를 얼마나 되돌릴지. 시즌 초 물갈이나
+# 잠깐 쉰 사람이 실제 실력보다 낮게 잡히는 것을 막는다. 숲 멸망전이 전 시즌 대비
+# 티어 변동에 페널티를 주는 것과 같은 개념이다. 되돌리기만 하고 깎지는 않는다.
+PEAK_WEIGHT = 0.25
+
 # 설계서 6.1 라인 적합도 감점. 티어 축에서 한 티어가 약 9점이고 종합 점수에는
 # 그 절반쯤 반영되므로, off 8점은 '부라인은 대략 한 티어 반 아래로 본다'는 뜻이다.
 #
@@ -121,6 +126,21 @@ def tier_score(tier: Optional[str], division: Optional[str], lp: int) -> Optiona
         return None
 
     return min(points / MAX_POINTS, 1.0) * 100
+
+def tier_with_peak(
+    current: Optional[float], peak: Optional[float]
+) -> Optional[float]:
+    """현재 티어에 최고 티어를 반영한다. 둘 다 tier_score 가 낸 0~100 이다.
+
+    언랭이면 최고 티어를 그대로 쓴다. UNRANKED_TIER 라는 추측보다 실제로 찍었던
+    티어가 낫다. 현재가 최고보다 낮으면 그 차이의 PEAK_WEIGHT 만큼 되돌린다.
+    """
+    if peak is None:
+        return current
+    if current is None:
+        return peak
+
+    return current + max(peak - current, 0.0) * PEAK_WEIGHT
 
 def role_score(games: int, win_rate: float, avg_kda: float) -> float:
     """라인별 성적을 0~100 으로 환산한다. 표본이 적으면 평균(50)으로 수축시킨다."""

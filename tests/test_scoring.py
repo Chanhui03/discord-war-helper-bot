@@ -8,6 +8,8 @@ from app.services.scoring import (
     MMR_SPAN,
     MMR_START,
     NEUTRAL,
+    PEAK_WEIGHT,
+    UNRANKED_TIER,
     adjustment,
     base_score,
     mastery_score,
@@ -18,6 +20,7 @@ from app.services.scoring import (
     role_power,
     role_score,
     tier_score,
+    tier_with_peak,
 )
 
 class TestTierScore:
@@ -64,6 +67,31 @@ class TestTierScore:
     def test_apex_tiers_share_one_lp_pool(self):
         # 마스터 이상은 디비전이 없고 LP 로만 구분된다.
         assert tier_score("MASTER", None, 300) == tier_score("CHALLENGER", None, 300)
+
+class TestTierWithPeak:
+    DIAMOND = tier_score("DIAMOND", "IV", 0)
+    PLATINUM = tier_score("PLATINUM", "III", 0)
+
+    def test_no_peak_leaves_the_current_tier_alone(self):
+        assert tier_with_peak(self.PLATINUM, None) == self.PLATINUM
+        assert tier_with_peak(None, None) is None
+
+    def test_unranked_falls_back_to_the_peak(self):
+        """UNRANKED_TIER 라는 추측보다 실제로 찍었던 티어가 낫다."""
+        assert tier_with_peak(None, self.DIAMOND) == self.DIAMOND
+        assert tier_with_peak(None, self.DIAMOND) > UNRANKED_TIER
+
+    def test_a_drop_is_partly_given_back(self):
+        lifted = tier_with_peak(self.PLATINUM, self.DIAMOND)
+        assert self.PLATINUM < lifted < self.DIAMOND
+        assert lifted == pytest.approx(
+            self.PLATINUM + (self.DIAMOND - self.PLATINUM) * PEAK_WEIGHT
+        )
+
+    def test_it_never_pulls_anyone_down(self):
+        """최고 티어는 되돌리기만 한다. 지금이 더 높으면 그대로 둔다."""
+        assert tier_with_peak(self.DIAMOND, self.PLATINUM) == self.DIAMOND
+        assert tier_with_peak(self.DIAMOND, self.DIAMOND) == self.DIAMOND
 
 class TestRoleScore:
     def test_no_games_returns_neutral(self):

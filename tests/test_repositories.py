@@ -48,7 +48,7 @@ from app.roles import ROLES
 from app.traits import CHAMPS, MAIN_CALL
 from app.services.matchmaking import LOBBY_SIZE, find_best_teams
 from app.services.replay import GameRecord, ParticipantRecord, riot_id_key
-from app.services.scoring import MMR_START
+from app.services.scoring import MMR_START, tier_score
 from app.services.stats import (
     SOLO_QUEUE_ID,
     build_profile,
@@ -171,6 +171,52 @@ class TestRefreshPlayerStats:
 
         stored = await get_player(session, 1)
         assert stored.stats.tier == "PLATINUM"
+
+    async def test_peak_tier_starts_at_the_current_tier(self, session):
+        player = await register(session, 1, "p-1")
+        await refresh_player_stats(session, FakeRiot(), player)
+
+        stats = (await get_player(session, 1)).stats
+        assert (stats.peak_tier, stats.peak_division) == ("GOLD", "II")
+
+    async def test_peak_tier_keeps_the_best_ever_seen(self, session):
+        player = await register(session, 1, "p-1")
+        await refresh_player_stats(session, FakeRiot(tier="DIAMOND"), player)
+        await refresh_player_stats(
+            session, FakeRiot(tier="GOLD"), player, force=True
+        )
+
+        stats = (await get_player(session, 1)).stats
+        assert stats.tier == "GOLD", "현재 티어는 떨어진 대로 남아야 한다"
+        assert stats.peak_tier == "DIAMOND", "최고 티어가 현재 티어로 덮였다"
+
+    async def test_a_drop_lifts_the_balancing_score_back_up(self, session):
+        """시즌 초 물갈이로 티어가 떨어져도 실력만큼은 남는다."""
+        player = await register(session, 1, "p-1")
+        await refresh_player_stats(session, FakeRiot(tier="DIAMOND"), player)
+        await refresh_player_stats(
+            session, FakeRiot(tier="GOLD"), player, force=True
+        )
+        dropped = build_profile(await get_player(session, 1))
+
+        other = await register(session, 2, "p-2")
+        await refresh_player_stats(session, FakeRiot(tier="GOLD"), other)
+        never = build_profile(await get_player(session, 2))
+
+        assert dropped.tier > never.tier
+
+    async def test_unranked_leans_on_the_peak_instead_of_guessing(self, session):
+        player = await register(session, 1, "p-1")
+        await refresh_player_stats(session, FakeRiot(tier="DIAMOND"), player)
+        await refresh_player_stats(
+            session, FakeRiot(tier=None, division=None), player, force=True
+        )
+
+        stats = (await get_player(session, 1)).stats
+        assert stats.tier is None and stats.peak_tier == "DIAMOND"
+        assert build_profile(await get_player(session, 1)).tier == pytest.approx(
+            tier_score("DIAMOND", "II", 50)
+        )
 
 class TestSoloQueueOnly:
     async def test_only_solo_queue_matches_are_requested(self, session):

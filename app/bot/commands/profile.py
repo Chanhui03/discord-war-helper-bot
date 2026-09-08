@@ -77,9 +77,15 @@ class Profile(commands.Cog):
             ),
             colour=discord.Colour.blurple(),
         )
+        # 최고 티어는 지금과 다를 때만 보여준다. 같으면 줄만 늘어난다.
+        peak = (
+            f"\n-# 최고 {stats.peak_tier} {stats.peak_division or ''}".rstrip()
+            if stats.peak_tier and stats.peak_tier != stats.tier
+            else ""
+        )
         embed.add_field(
             name="솔로랭크",
-            value=f"{rank}\n{stats.wins}승 {stats.losses}패 ({stats.win_rate:.1%})",
+            value=f"{rank}\n{stats.wins}승 {stats.losses}패 ({stats.win_rate:.1%}){peak}",
         )
         embed.add_field(
             name="최근 폼",

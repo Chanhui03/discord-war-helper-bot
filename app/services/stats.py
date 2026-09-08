@@ -12,12 +12,15 @@ from app.services.scoring import (
     call_score,
     rank_score,
     champion_pool_score,
+    tier_with_peak,
     mastery_score,
     performance_score,
     role_score,
     tier_score,
     trait_score,
 )
+from app.config.settings import settings
+from app.services.opgg import fetch_peak
 from app.traits import CHAMPS, FOLLOW, MAIN_CALL
 
 SOLO_QUEUE = "RANKED_SOLO_5x5"
@@ -122,6 +125,27 @@ def profile_score(profile: PlayerProfile) -> float:
         follow=profile.follow,
     )
 
+async def peak_of(player, solo, stored) -> tuple:
+    """이번 갱신 뒤 남길 (최고 티어, 디비전, LP).
+
+    지금 티어가 기록보다 높으면 갈아 끼운다. 기록이 아직 없으면 op.gg 에서 과거
+    시즌을 한 번 받아 메운다. 우리가 직접 쌓는 값은 등록 시점부터라 시즌 초에
+    비어 있는데, 정확히 그때가 보정이 가장 필요한 시점이다.
+    """
+    best = (stored.peak_tier, stored.peak_division, stored.peak_lp) if stored else None
+    if best is not None and best[0] is None:
+        best = None
+
+    if best is None and settings.opgg_backfill:
+        best = await fetch_peak(player.riot_game_name, player.riot_tagline)
+
+    now = (solo["tier"], solo["rank"], solo["leaguePoints"]) if solo else None
+    candidates = [c for c in (best, now) if c is not None]
+    if not candidates:
+        return (None, None, 0)
+
+    return max(candidates, key=lambda c: tier_score(*c) or -1.0)
+
 async def fetch_matches(riot, match_ids: List[str]) -> List[Dict[str, Any]]:
     """rate limit 을 넘기지 않도록 동시 호출 수를 제한해 경기 상세를 받는다."""
     limit = asyncio.Semaphore(MATCH_CONCURRENCY)
@@ -170,6 +194,9 @@ async def refresh_player_stats(session, riot, player, force: bool = False) -> bo
     losses = solo["losses"] if solo else 0
     total = wins + losses
 
+    # 기존 stats 를 통째로 갈아 끼우므로 최고 티어는 미리 꺼내 이어붙인다.
+    peak_tier, peak_division, peak_lp = await peak_of(player, solo, player.stats)
+
     player.stats = PlayerStats(
         tier=solo["tier"] if solo else None,
         division=solo["rank"] if solo else None,
@@ -184,6 +211,9 @@ async def refresh_player_stats(session, riot, player, force: bool = False) -> bo
         champion_pool=champion_pool_score(
             [entry.get("championPoints", 0) for entry in masteries], total
         ),
+        peak_tier=peak_tier,
+        peak_division=peak_division,
+        peak_lp=peak_lp,
     )
     player.roles = [
         PlayerRole(role=role, **values) for role, values in aggregate["roles"].items()
@@ -217,7 +247,12 @@ def build_profile(
     return PlayerProfile(
         player_id=player.id,
         display=f"{player.riot_game_name}#{player.riot_tagline}",
-        tier=tier_score(stats.tier, stats.division, stats.lp) if stats else None,
+        tier=tier_with_peak(
+            tier_score(stats.tier, stats.division, stats.lp),
+            tier_score(stats.peak_tier, stats.peak_division, stats.peak_lp),
+        )
+        if stats
+        else None,
         recent_form=recent.recent_win_rate * 100 if recent else None,
         performance=performance_score(recent.avg_kda) if recent else None,
         mmr=mmr,

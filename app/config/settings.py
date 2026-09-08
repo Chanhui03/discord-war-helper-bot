@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     # 음성 대본 채점에만 쓴다. 비워두면 /오더채점 만 동작하지 않는다.
     anthropic_api_key: str = ""
     database_url: str = f"sqlite+aiosqlite:///{ROOT / 'war_helper.db'}"
+    # 최고 티어를 op.gg 에서 한 번 받아올지. 우리가 직접 쌓는 최고 티어는 등록
+    # 시점부터라 시즌 초에 비어 있어서, 그 구멍만 메우는 용도다. 꺼도 점수는
+    # 그대로 나오고 최고 티어만 등록 이후 기록으로 채워진다.
+    opgg_backfill: bool = True
     # 쉼표로 여러 서버를 적을 수 있다. 비우면 전역 등록.
     # NoDecode 가 없으면 pydantic 이 "1,2" 를 JSON 으로 파싱하려다 실패한다.
     discord_guild_ids: Annotated[List[int], NoDecode] = Field(

@@ -100,6 +100,11 @@ class PlayerStats(Base):
     recent_games: Mapped[int] = mapped_column(Integer, default=0)
     # 챔피언 숙련도에서 계산한 챔피언폭(0~100). 조회할 수 없으면 비워 둔다.
     champion_pool: Mapped[Optional[float]] = mapped_column(Float)
+    # 지금까지 확인된 최고 티어. 갱신할 때마다 현재 티어와 비교해 높은 쪽을 남긴다.
+    # 시즌 초 물갈이나 잠깐 쉰 사람이 실제 실력보다 낮게 잡히는 것을 막는다.
+    peak_tier: Mapped[Optional[str]] = mapped_column(String(16))
+    peak_division: Mapped[Optional[str]] = mapped_column(String(4))
+    peak_lp: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

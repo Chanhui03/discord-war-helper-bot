@@ -1,7 +1,21 @@
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.config.settings import settings
 from app.database.base import Base
+
+@pytest.fixture(autouse=True)
+def no_network():
+    """테스트가 op.gg 로 나가지 않게 막는다.
+
+    최고 티어 백필은 남의 사이트를 부르므로 기본값이 켜져 있어도 여기서는 끈다.
+    파싱 자체는 저장해 둔 응답으로 test_opgg.py 에서 따로 본다.
+    """
+    previous = settings.opgg_backfill
+    settings.opgg_backfill = False
+    yield
+    settings.opgg_backfill = previous
 
 @pytest_asyncio.fixture
 async def session():
